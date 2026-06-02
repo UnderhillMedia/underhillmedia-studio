@@ -57,6 +57,7 @@ const NAV_ITEMS = [
   { id: "invoices", label: "Invoices", icon: "◧" },
   { id: "expenses", label: "Expenses", icon: "◰" },
   { id: "mileage", label: "Mileage", icon: "◱" },
+  { id: "calendar", label: "Calendar", icon: "◻" },
   { id: "contracts", label: "Contracts", icon: "◪" },
   { id: "assistant", label: "AI Assistant", icon: "◉" },
 ];
@@ -1102,6 +1103,222 @@ function Mileage({ mileage, setMileage, clients }) {
   );
 }
 
+// ── CALENDAR HELPERS ───────────────────────────────────────────────────────
+async function createCalendarEvent({ title, date, time = "09:00", duration = 60, description = "", location = "" }) {
+  const prompt = `Using Google Calendar MCP, create a calendar event with these details:
+Title: ${title}
+Date: ${date}
+Time: ${time}
+Duration: ${duration} minutes
+Description: ${description}
+Location: ${location}
+Create the event now and confirm it was created.`;
+  return callClaude([{ role: "user", content: prompt }],
+    "You are a calendar assistant. Use the Google Calendar MCP tools to create events. Be brief in confirmation. Never use dashes.");
+}
+
+async function getUpcomingEvents() {
+  const prompt = `Using Google Calendar MCP, fetch all events for the next 14 days and return them as a JSON array with this format:
+[{"title":"event name","date":"YYYY-MM-DD","time":"HH:MM","duration":60,"description":"","location":""}]
+Return ONLY the JSON array, no other text.`;
+  const result = await callClaude([{ role: "user", content: prompt }],
+    "You are a calendar assistant. Use Google Calendar MCP to fetch events. Return only valid JSON arrays.");
+  try {
+    const match = result.match(/\[[\s\S]*\]/);
+    return match ? JSON.parse(match[0]) : [];
+  } catch { return []; }
+}
+
+// ── CALENDAR ───────────────────────────────────────────────────────────────
+function Calendar({ clients, projects, invoices }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [suggestion, setSuggestion] = useState("");
+  const [suggesting, setSuggesting] = useState(false);
+  const [form, setForm] = useState({ title: "", date: "", time: "09:00", duration: "60", description: "", location: "" });
+  const [result, setResult] = useState("");
+
+  const loadEvents = async () => {
+    setLoading(true);
+    const data = await getUpcomingEvents();
+    setEvents(data);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadEvents(); }, []);
+
+  const addEvent = async () => {
+    if (!form.title || !form.date) return;
+    setCreating(true);
+    const res = await createCalendarEvent({ ...form, duration: Number(form.duration) });
+    setResult(res);
+    setCreating(false);
+    setShowAdd(false);
+    loadEvents();
+  };
+
+  const suggestTime = async () => {
+    setSuggesting(true);
+    const upcomingProjects = projects.filter(p => p.status === "in_progress").map(p => `${p.name} due ${p.dueDate}`).join(", ");
+    const prompt = `Look at Nate's Google Calendar for the next 14 days using the MCP tools. Then suggest the 3 best available time slots for a client meeting, considering his existing schedule and these active projects: ${upcomingProjects}. Keep it brief and practical. Never use dashes.`;
+    const res = await callClaude([{ role: "user", content: prompt }],
+      "You are a smart scheduling assistant with access to Google Calendar. Analyze the calendar and suggest optimal meeting times.");
+    setSuggestion(res);
+    setSuggesting(false);
+  };
+
+  const quickAddFromProject = async (project) => {
+    setCreating(true);
+    const client = clients.find(c => c.id === project.clientId);
+    const res = await createCalendarEvent({
+      title: `📹 ${project.name} Deadline`,
+      date: project.dueDate,
+      time: "09:00",
+      duration: 30,
+      description: `Project deadline for ${client?.name || "client"}. ${project.notes || ""}`,
+    });
+    setResult(res);
+    setCreating(false);
+    loadEvents();
+  };
+
+  const quickAddFromInvoice = async (invoice) => {
+    setCreating(true);
+    const client = clients.find(c => c.id === invoice.clientId);
+    const res = await createCalendarEvent({
+      title: `💰 ${invoice.number} Due — ${client?.name}`,
+      date: invoice.dueDate,
+      time: "09:00",
+      duration: 15,
+      description: `Invoice ${invoice.number} for $${invoice.amount} due from ${client?.name}`,
+    });
+    setResult(res);
+    setCreating(false);
+    loadEvents();
+  };
+
+  const today = new Date().toISOString().split("T")[0];
+  const upcomingProjects = projects.filter(p => p.status === "in_progress" && p.dueDate >= today);
+  const outstandingInvoices = invoices.filter(i => i.status === "outstanding");
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 24, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Calendar</h2>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={loadEvents} disabled={loading} style={{ background: "#1a2235", border: "1px solid #2a3550", borderRadius: 8, padding: "8px 14px", color: "#8892a4", fontSize: 12, cursor: "pointer" }}>
+            {loading ? "Loading..." : "↻ Refresh"}
+          </button>
+          <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add Event</PrimaryBtn>
+        </div>
+      </div>
+
+      {/* Smart Schedule Suggestion */}
+      <div style={{ background: "linear-gradient(135deg, #1a1a2e, #16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: 20, marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: suggestion ? 14 : 0 }}>
+          <div>
+            <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Smart Scheduling</div>
+            <div style={{ color: "#6b7a8e", fontSize: 12 }}>Claude reads your calendar and suggests the best times for client meetings</div>
+          </div>
+          <button onClick={suggestTime} disabled={suggesting} style={{
+            background: "linear-gradient(135deg, #3b5bdb, #4c6ef5)", border: "none", borderRadius: 8,
+            padding: "9px 16px", color: "#fff", fontSize: 12, cursor: suggesting ? "default" : "pointer", whiteSpace: "nowrap", marginLeft: 16,
+          }}>{suggesting ? "Checking calendar..." : "◉ Suggest Times"}</button>
+        </div>
+        {suggestion && (
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+            <pre style={{ color: "#c8d3e0", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0 }}>{suggestion}</pre>
+          </div>
+        )}
+      </div>
+
+      {result && (
+        <div style={{ background: "#4ade8012", border: "1px solid #4ade8030", borderRadius: 10, padding: "12px 16px", marginBottom: 20, color: "#4ade80", fontSize: 13 }}>
+          {result}
+          <button onClick={() => setResult("")} style={{ background: "none", border: "none", color: "#4ade8080", cursor: "pointer", float: "right", fontSize: 14 }}>✕</button>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        {/* Upcoming from Google Calendar */}
+        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Next 14 Days</h3>
+          {loading && <div style={{ color: "#6b7a8e", fontSize: 13 }}>Loading from Google Calendar...</div>}
+          {!loading && events.length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No events found. Connect Google Calendar or add events.</div>}
+          {events.map((e, i) => (
+            <div key={i} style={{ padding: "12px 0", borderBottom: "1px solid #1a2235" }}>
+              <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{e.title}</div>
+              <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 3 }}>{e.date} {e.time && `at ${e.time}`} {e.duration && `· ${e.duration}min`}</div>
+              {e.location && <div style={{ color: "#4c6ef5", fontSize: 11, marginTop: 2 }}>📍 {e.location}</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* Quick add from projects and invoices */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Add Project Deadlines</h3>
+            {upcomingProjects.length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No active projects.</div>}
+            {upcomingProjects.map(p => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                <div>
+                  <div style={{ color: "#e2e8f0", fontSize: 13 }}>{p.name}</div>
+                  <div style={{ color: "#6b7a8e", fontSize: 11 }}>Due {p.dueDate}</div>
+                </div>
+                <button onClick={() => quickAddFromProject(p)} disabled={creating}
+                  style={{ background: "#60a5fa20", border: "1px solid #60a5fa40", borderRadius: 6, padding: "5px 10px", color: "#60a5fa", fontSize: 11, cursor: "pointer" }}>
+                  + Calendar
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Add Invoice Reminders</h3>
+            {outstandingInvoices.length === 0 && <div style={{ color: "#4ade80", fontSize: 13 }}>No outstanding invoices.</div>}
+            {outstandingInvoices.map(inv => {
+              const client = clients.find(c => c.id === inv.clientId);
+              return (
+                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                  <div>
+                    <div style={{ color: "#e2e8f0", fontSize: 13 }}>{inv.number} · {client?.name}</div>
+                    <div style={{ color: "#facc15", fontSize: 11 }}>${inv.amount} due {inv.dueDate}</div>
+                  </div>
+                  <button onClick={() => quickAddFromInvoice(inv)} disabled={creating}
+                    style={{ background: "#facc1520", border: "1px solid #facc1540", borderRadius: 6, padding: "5px 10px", color: "#facc15", fontSize: 11, cursor: "pointer" }}>
+                    + Calendar
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Calendar Event" onClose={() => setShowAdd(false)}>
+          <InputField label="Title" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Client call with Krista" />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <InputField label="Date" value={form.date} onChange={v => setForm({ ...form, date: v })} type="date" />
+            <InputField label="Time" value={form.time} onChange={v => setForm({ ...form, time: v })} type="time" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <InputField label="Duration (mins)" value={form.duration} onChange={v => setForm({ ...form, duration: v })} type="number" placeholder="60" />
+            <InputField label="Location" value={form.location} onChange={v => setForm({ ...form, location: v })} placeholder="Optional" />
+          </div>
+          <InputField label="Description" value={form.description} onChange={v => setForm({ ...form, description: v })} placeholder="Optional notes" />
+          <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 8 }}>
+            <GhostBtn onClick={() => setShowAdd(false)}>Cancel</GhostBtn>
+            <PrimaryBtn onClick={addEvent}>{creating ? "Creating..." : "Add to Calendar"}</PrimaryBtn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 // ── CONTRACTS ─────────────────────────────────────────────────────────────
 const CONTRACT_TEMPLATES = [
   { id: "video_production", label: "Video Production Agreement" },
@@ -1686,6 +1903,7 @@ export default function App() {
       case "invoices": return <Invoices invoices={invoices} setInvoices={setInvoices} clients={clients} projects={projects} />;
       case "expenses": return <Expenses expenses={expenses} setExpenses={setExpenses} />;
       case "mileage": return <Mileage mileage={mileage} setMileage={setMileage} clients={clients} />;
+      case "calendar": return <Calendar clients={clients} projects={projects} invoices={invoices} />;
       case "contracts": return <Contracts clients={clients} />;
       case "assistant": return <Assistant clients={clients} projects={projects} invoices={invoices} expenses={expenses} mileage={mileage} />;
       default: return null;
@@ -1793,8 +2011,8 @@ export default function App() {
           { id: "clients", label: "Clients", icon: "◈" },
           { id: "projects", label: "Projects", icon: "◫" },
           { id: "invoices", label: "Invoices", icon: "◧" },
+          { id: "calendar", label: "Calendar", icon: "◻" },
           { id: "expenses", label: "Expenses", icon: "◰" },
-          { id: "mileage", label: "Miles", icon: "◱" },
           { id: "assistant", label: "Claude", icon: "◉" },
         ].map(item => (
           <button key={item.id} onClick={() => setActive(item.id)} style={{
