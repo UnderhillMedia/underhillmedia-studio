@@ -1682,9 +1682,39 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #2a3550; border-radius: 3px; }
         option { background: #1a2235; }
+        @media (max-width: 768px) {
+          .desktop-sidebar { display: none !important; }
+          .desktop-main { margin-left: 0 !important; padding: 72px 16px 90px !important; }
+          .mobile-nav { display: flex !important; }
+          .mobile-header { display: flex !important; }
+          table { font-size: 12px; }
+          th, td { padding: 10px 12px !important; }
+        }
+        @media (min-width: 769px) {
+          .mobile-nav { display: none !important; }
+          .mobile-header { display: none !important; }
+        }
       `}</style>
+
+      {/* Mobile Header */}
+      <div className="mobile-header" style={{
+        display: "none", position: "fixed", top: 0, left: 0, right: 0, zIndex: 800,
+        background: "#0a0f1e", borderBottom: "1px solid #1a2235",
+        padding: "12px 20px", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <div>
+          <div style={{ fontSize: 10, letterSpacing: "0.2em", color: "#3b5bdb", textTransform: "uppercase", fontWeight: 600 }}>Underhillmedia</div>
+          <div style={{ fontSize: 16, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Studio</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80" }} />
+          <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: "0.08em" }}>LIVE</span>
+        </div>
+      </div>
+
       <div style={{ display: "flex", minHeight: "100vh", background: "#070d1a" }}>
-        <div style={{ width: 220, background: "#0a0f1e", borderRight: "1px solid #1a2235", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0 }}>
+        {/* Desktop Sidebar */}
+        <div className="desktop-sidebar" style={{ width: 220, background: "#0a0f1e", borderRight: "1px solid #1a2235", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0 }}>
           <div style={{ padding: "28px 24px 20px" }}>
             <div style={{ fontSize: 11, letterSpacing: "0.2em", color: "#3b5bdb", textTransform: "uppercase", fontWeight: 600, marginBottom: 2 }}>Underhillmedia</div>
             <div style={{ fontSize: 18, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Studio</div>
@@ -1692,9 +1722,6 @@ export default function App() {
               <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80" }} />
               <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: "0.08em" }}>LIVE</span>
             </div>
-          </div>
-          <div style={{ padding: "6px 12px", marginBottom: 4 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "#3a4a60", textTransform: "uppercase", padding: "4px 12px" }}>Business</div>
           </div>
           <nav style={{ flex: 1, padding: "0 12px", overflowY: "auto" }}>
             {NAV_ITEMS.map(item => (
@@ -1721,9 +1748,39 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div style={{ marginLeft: 220, flex: 1, padding: "40px 44px", minHeight: "100vh" }}>
+
+        {/* Main Content */}
+        <div className="desktop-main" style={{ marginLeft: 220, flex: 1, padding: "40px 44px", minHeight: "100vh", paddingTop: "40px" }}>
           {renderPage()}
         </div>
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      <div className="mobile-nav" style={{
+        display: "none", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 800,
+        background: "#0a0f1e", borderTop: "1px solid #1a2235",
+        padding: "8px 0 20px",
+        justifyContent: "space-around", alignItems: "center",
+      }}>
+        {[
+          { id: "dashboard", label: "Home", icon: "⬡" },
+          { id: "clients", label: "Clients", icon: "◈" },
+          { id: "projects", label: "Projects", icon: "◫" },
+          { id: "invoices", label: "Invoices", icon: "◧" },
+          { id: "expenses", label: "Expenses", icon: "◰" },
+          { id: "mileage", label: "Miles", icon: "◱" },
+          { id: "assistant", label: "Claude", icon: "◉" },
+        ].map(item => (
+          <button key={item.id} onClick={() => setActive(item.id)} style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+            background: "none", border: "none", cursor: "pointer", padding: "4px 8px",
+            color: active === item.id ? "#7c9ef8" : "#4a5568",
+            minWidth: 44,
+          }}>
+            <span style={{ fontSize: 18 }}>{item.icon}</span>
+            <span style={{ fontSize: 9, letterSpacing: "0.04em", fontWeight: active === item.id ? 600 : 400 }}>{item.label}</span>
+          </button>
+        ))}
       </div>
 
       <ClaudeCommandBar
