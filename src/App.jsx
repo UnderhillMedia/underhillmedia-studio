@@ -459,6 +459,8 @@ function Clients({ clients, setClients, interactions, setInteractions, followups
   const [selectedClient, setSelectedClient] = useState(null);
   const [view, setView] = useState("pipeline");
   const [generating, setGenerating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", status: "prospect", company: "", source: "", notes: "" });
 
   const addClient = () => {
@@ -466,6 +468,52 @@ function Clients({ clients, setClients, interactions, setInteractions, followups
     setClients([...clients, { id: Date.now(), totalBilled: 0, outstanding: 0, pipelineStage: "Lead", ...form }]);
     setForm({ name: "", email: "", phone: "", status: "prospect", company: "", source: "", notes: "" });
     setShowAdd(false);
+  };
+
+  const importFromGmail = async () => {
+    setImporting(true);
+    setImportResult(null);
+    const prompt = `You have access to Gmail via MCP. Please search through Nate's sent emails from the last 12 months and extract a list of unique clients and contacts he has emailed. For each contact extract: full name, email address, and any company name if mentioned. Focus on people who appear to be clients or business contacts, not personal contacts or newsletters. Return ONLY a JSON array like this with no other text:
+[{"name":"Full Name","email":"email@example.com","company":"Company Name or empty string"}]
+Extract up to 30 contacts. Only include people Nate has actually emailed back and forth with.`;
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 1000,
+          system: "You are a helpful assistant with access to Gmail. Return only valid JSON arrays, no markdown, no explanation.",
+          messages: [{ role: "user", content: prompt }],
+          mcp_servers: MCP_SERVERS,
+        }),
+      });
+      const data = await response.json();
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error("No contacts found");
+      const contacts = JSON.parse(jsonMatch[0]);
+      const existing = clients.map(c => c.email?.toLowerCase());
+      const newContacts = contacts.filter(c => c.email && !existing.includes(c.email.toLowerCase()));
+      setImportResult({ contacts: newContacts, total: contacts.length });
+    } catch (e) {
+      setImportResult({ error: "Could not import from Gmail. Make sure Gmail is connected." });
+    }
+    setImporting(false);
+  };
+
+  const confirmImport = async () => {
+    if (!importResult?.contacts) return;
+    for (const c of importResult.contacts) {
+      await setClients(prev => [...prev, {
+        id: Date.now() + Math.random(),
+        name: c.name, email: c.email, company: c.company || "",
+        phone: "", status: "prospect", pipelineStage: "Lead",
+        totalBilled: 0, outstanding: 0, source: "Gmail import", notes: "",
+      }]);
+    }
+    setImportResult(null);
   };
 
   const pendingFollowups = followups.filter(f => !f.done);
@@ -485,9 +533,50 @@ function Clients({ clients, setClients, interactions, setInteractions, followups
               <button key={v} onClick={() => setView(v)} style={{ padding: "8px 16px", background: view === v ? "#3b5bdb22" : "transparent", border: "none", color: view === v ? "#7c9ef8" : "#6b7a8e", fontSize: 12, cursor: "pointer", textTransform: "capitalize" }}>{v}</button>
             ))}
           </div>
+          <button onClick={importFromGmail} disabled={importing} style={{
+            background: "#ea433520", border: "1px solid #ea433540", borderRadius: 8,
+            padding: "8px 16px", color: "#ea4335", fontSize: 12, cursor: importing ? "default" : "pointer", fontWeight: 500,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ fontSize: 14 }}>✉</span>
+            {importing ? "Scanning Gmail..." : "Import from Gmail"}
+          </button>
           <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add Client</PrimaryBtn>
         </div>
       </div>
+
+      {/* Gmail import result */}
+      {importResult && !importResult.error && (
+        <div style={{ background: "#0f1623", border: "1px solid #4ade8040", borderRadius: 12, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div>
+              <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+                Found {importResult.contacts.length} new contacts from Gmail
+              </div>
+              <div style={{ color: "#6b7a8e", fontSize: 12 }}>{importResult.total - importResult.contacts.length} already in your CRM</div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <GhostBtn onClick={() => setImportResult(null)}>Cancel</GhostBtn>
+              <PrimaryBtn onClick={confirmImport}>Import All</PrimaryBtn>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            {importResult.contacts.map((c, i) => (
+              <div key={i} style={{ background: "#1a2235", border: "1px solid #2a3550", borderRadius: 8, padding: "10px 14px" }}>
+                <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{c.name}</div>
+                <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 3 }}>{c.email}</div>
+                {c.company && <div style={{ color: "#4c6ef5", fontSize: 11, marginTop: 2 }}>{c.company}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {importResult?.error && (
+        <div style={{ background: "#f8717110", border: "1px solid #f8717130", borderRadius: 10, padding: "12px 18px", marginBottom: 20, color: "#f87171", fontSize: 13 }}>
+          {importResult.error}
+        </div>
+      )}
 
       {/* Pending follow-ups banner */}
       {pendingFollowups.length > 0 && (
