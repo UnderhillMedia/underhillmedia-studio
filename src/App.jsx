@@ -581,49 +581,77 @@ Extract up to 30 contacts. Only include people Nate has actually emailed back an
 
       {/* Pending follow-ups banner */}
       {pendingFollowups.length > 0 && (
-        <div style={{ background: "#facc1510", border: "1px solid #facc1530", borderRadius: 10, padding: "12px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ color: "#facc15", fontSize: 16 }}>⚠</span>
-          <span style={{ color: "#facc15", fontSize: 13 }}>{pendingFollowups.length} pending follow-up{pendingFollowups.length > 1 ? "s" : ""} — </span>
-          <span style={{ color: "#8892a4", fontSize: 13 }}>{pendingFollowups.slice(0, 2).map(f => { const c = clients.find(cl => cl.id === f.clientId); return c?.name; }).filter(Boolean).join(", ")}{pendingFollowups.length > 2 ? ` +${pendingFollowups.length - 2} more` : ""}</span>
+        <div style={{ background: "#facc1510", border: "1px solid #facc1530", borderRadius: 10, padding: "12px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ color: "#facc15", fontSize: 14 }}>⚠</span>
+          <span style={{ color: "#facc15", fontSize: 13 }}>{pendingFollowups.length} pending follow-up{pendingFollowups.length > 1 ? "s" : ""}</span>
         </div>
       )}
 
-      {/* PIPELINE VIEW */}
+      {/* PIPELINE VIEW — desktop horizontal, mobile vertical list */}
       {view === "pipeline" && (
-        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
-          {PIPELINE_STAGES.map(stage => {
-            const stageClients = clients.filter(c => (c.pipelineStage || (c.status === "active" ? "Active" : c.status === "prospect" ? "Lead" : "Inactive")) === stage);
-            const color = getStageColor(stage);
-            return (
-              <div key={stage} style={{ minWidth: 200, flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
-                  <span style={{ color: "#8892a4", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>{stage}</span>
-                  <span style={{ color: "#3a4a60", fontSize: 11 }}>({stageClients.length})</span>
+        <>
+          {/* Desktop pipeline */}
+          <div className="desktop-only" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
+            {PIPELINE_STAGES.map(stage => {
+              const stageClients = clients.filter(c => (c.pipelineStage || (c.status === "active" ? "Active" : c.status === "prospect" ? "Lead" : "Inactive")) === stage);
+              const color = getStageColor(stage);
+              return (
+                <div key={stage} style={{ minWidth: 200, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+                    <span style={{ color: "#8892a4", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>{stage}</span>
+                    <span style={{ color: "#3a4a60", fontSize: 11 }}>({stageClients.length})</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {stageClients.map(c => {
+                      const clientFollowups = followups.filter(f => f.clientId === c.id && !f.done);
+                      return (
+                        <div key={c.id} onClick={() => setSelectedClient(c)} style={{ background: "#0f1623", border: `1px solid ${color}22`, borderLeft: `3px solid ${color}`, borderRadius: 10, padding: "14px 14px", cursor: "pointer" }}>
+                          <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{c.name}</div>
+                          <div style={{ color: "#6b7a8e", fontSize: 11, marginBottom: 8 }}>{c.email}</div>
+                          {c.totalBilled > 0 && <div style={{ color: "#4ade80", fontSize: 12, fontFamily: "'DM Mono', monospace", marginBottom: 6 }}>${c.totalBilled.toLocaleString()} billed</div>}
+                          {clientFollowups.length > 0 && <div style={{ color: "#facc15", fontSize: 11 }}>● {clientFollowups.length} follow-up{clientFollowups.length > 1 ? "s" : ""}</div>}
+                        </div>
+                      );
+                    })}
+                    {stageClients.length === 0 && <div style={{ border: "1px dashed #1e2d45", borderRadius: 10, padding: "20px 14px", color: "#3a4a60", fontSize: 12, textAlign: "center" }}>Empty</div>}
+                  </div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              );
+            })}
+          </div>
+
+          {/* Mobile: flat list of all clients sorted by stage */}
+          <div className="mobile-only" style={{ display: "none", flexDirection: "column", gap: 10 }}>
+            {PIPELINE_STAGES.map(stage => {
+              const stageClients = clients.filter(c => (c.pipelineStage || (c.status === "active" ? "Active" : c.status === "prospect" ? "Lead" : "Inactive")) === stage);
+              if (stageClients.length === 0) return null;
+              const color = getStageColor(stage);
+              return (
+                <div key={stage}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, marginTop: 8 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
+                    <span style={{ color: "#8892a4", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>{stage} ({stageClients.length})</span>
+                  </div>
                   {stageClients.map(c => {
                     const clientFollowups = followups.filter(f => f.clientId === c.id && !f.done);
                     return (
-                      <div key={c.id} onClick={() => setSelectedClient(c)} style={{ background: "#0f1623", border: `1px solid ${color}22`, borderLeft: `3px solid ${color}`, borderRadius: 10, padding: "14px 14px", cursor: "pointer", transition: "border-color 0.15s" }}>
-                        <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{c.name}</div>
-                        <div style={{ color: "#6b7a8e", fontSize: 11, marginBottom: 8 }}>{c.email}</div>
-                        {c.totalBilled > 0 && <div style={{ color: "#4ade80", fontSize: 12, fontFamily: "'DM Mono', monospace", marginBottom: 6 }}>${c.totalBilled.toLocaleString()} billed</div>}
-                        {clientFollowups.length > 0 && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                            <span style={{ color: "#facc15", fontSize: 10 }}>●</span>
-                            <span style={{ color: "#facc15", fontSize: 11 }}>{clientFollowups.length} follow-up{clientFollowups.length > 1 ? "s" : ""}</span>
+                      <div key={c.id} onClick={() => setSelectedClient(c)} style={{ background: "#0f1623", border: `1px solid ${color}22`, borderLeft: `3px solid ${color}`, borderRadius: 10, padding: "14px", marginBottom: 8, cursor: "pointer" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div>
+                            <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                            <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>{c.email}</div>
                           </div>
-                        )}
+                          {clientFollowups.length > 0 && <span style={{ color: "#facc15", fontSize: 11 }}>● {clientFollowups.length}</span>}
+                        </div>
                       </div>
                     );
                   })}
-                  {stageClients.length === 0 && <div style={{ border: "1px dashed #1e2d45", borderRadius: 10, padding: "20px 14px", color: "#3a4a60", fontSize: 12, textAlign: "center" }}>Empty</div>}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* LIST VIEW */}
