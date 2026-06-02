@@ -918,26 +918,37 @@ function Expenses({ expenses, setExpenses }) {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 24, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Expenses</h2>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={analyzeDeductions} disabled={analyzing} style={{ background: "#c084fc20", border: "1px solid #c084fc40", borderRadius: 8, padding: "9px 16px", color: "#c084fc", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-            {analyzing ? "Analyzing..." : "✦ AI Deduction Analysis"}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={analyzeDeductions} disabled={analyzing} style={{ background: "#c084fc20", border: "1px solid #c084fc40", borderRadius: 8, padding: "8px 12px", color: "#c084fc", fontSize: 11, cursor: "pointer", fontWeight: 500 }}>
+            {analyzing ? "Analyzing..." : "✦ AI Analysis"}
           </button>
-          <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add Expense</PrimaryBtn>
+          <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add</PrimaryBtn>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
-        <StatCard label="Total Spent" value={`$${totalAll.toFixed(2)}`} sub="all expenses" accent="#f87171" />
-        <StatCard label="Tax Deductible" value={`$${totalDeductible.toFixed(2)}`} sub="flagged as deductible" accent="#c084fc" />
-        <StatCard label="Non-Deductible" value={`$${(totalAll - totalDeductible).toFixed(2)}`} sub="personal or mixed" accent="#6b7a8e" />
+      {/* Stat cards — stack on mobile */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }} className="stat-grid">
+        <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #f8717133", borderRadius: 10, padding: "16px" }}>
+          <div style={{ fontSize: 10, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Total Spent</div>
+          <div style={{ fontSize: 22, color: "#f87171", fontFamily: "'DM Mono',monospace", fontWeight: 500 }}>${totalAll.toFixed(0)}</div>
+        </div>
+        <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #c084fc33", borderRadius: 10, padding: "16px" }}>
+          <div style={{ fontSize: 10, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Deductible</div>
+          <div style={{ fontSize: 22, color: "#c084fc", fontFamily: "'DM Mono',monospace", fontWeight: 500 }}>${totalDeductible.toFixed(0)}</div>
+        </div>
+        <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #6b728033", borderRadius: 10, padding: "16px" }}>
+          <div style={{ fontSize: 10, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Personal</div>
+          <div style={{ fontSize: 22, color: "#6b7280", fontFamily: "'DM Mono',monospace", fontWeight: 500 }}>${(totalAll - totalDeductible).toFixed(0)}</div>
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+      {/* Category filter */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {cats.map(c => (
           <button key={c} onClick={() => setFilterCat(c)} style={{
-            padding: "5px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+            padding: "4px 12px", borderRadius: 20, fontSize: 11, cursor: "pointer",
             background: filterCat === c ? "#3b5bdb33" : "transparent",
             border: filterCat === c ? "1px solid #3b5bdb66" : "1px solid #2a3550",
             color: filterCat === c ? "#7c9ef8" : "#6b7a8e",
@@ -945,7 +956,32 @@ function Expenses({ expenses, setExpenses }) {
         ))}
       </div>
 
-      <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, overflow: "hidden" }}>
+      {/* Mobile cards */}
+      <div className="mobile-only" style={{ display: "none", flexDirection: "column", gap: 10 }}>
+        {filtered.map(e => (
+          <div key={e.id} style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ flex: 1, marginRight: 12 }}>
+                <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500, marginBottom: 3 }}>{e.description}</div>
+                <div style={{ color: "#6b7a8e", fontSize: 11 }}>{e.category} · {e.date}</div>
+                {e.notes && <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2, fontStyle: "italic" }}>{e.notes}</div>}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: "#c084fc", fontFamily: "'DM Mono',monospace", fontSize: 16, fontWeight: 600 }}>${e.amount.toFixed(2)}</div>
+                <div style={{ marginTop: 4 }}>
+                  {e.deductible
+                    ? <span style={{ color: "#4ade80", fontSize: 11 }}>✓ deductible</span>
+                    : <span style={{ color: "#6b7a8e", fontSize: 11 }}>personal</span>}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => deleteExpense(e.id)} style={{ background: "none", border: "none", color: "#f8717150", cursor: "pointer", fontSize: 11, marginTop: 8, padding: 0 }}>Remove</button>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="desktop-only" style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#0a1020" }}>
@@ -1931,6 +1967,7 @@ export default function App() {
           .claude-fab { bottom: 90px !important; right: 16px !important; }
           .mobile-only { display: flex !important; }
           .desktop-only { display: none !important; }
+          .stat-grid { grid-template-columns: repeat(3, 1fr) !important; }
         }
         @media (min-width: 769px) {
           .mobile-nav { display: none !important; }
