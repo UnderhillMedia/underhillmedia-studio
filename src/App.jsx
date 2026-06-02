@@ -5,7 +5,7 @@ const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 const IRS_RATE_2026 = 0.70;
 
 const SUPABASE_URL = "https://foftzpsgshrziblffezl.supabase.co";
-const SUPABASE_KEY = "sb_publishable_CrHCmLAVuTIKH-qHXARl0g_qU76oyVy";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvZmx6cHNnc2hyemlibGZmZXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjE0ODEsImV4cCI6MjA5NTk5NzQ4MX0.RPRADroSrZZKWlJdu5UiEomKPc5uTMcCStBsT6NlLFA";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const MCP_SERVERS = [
