@@ -801,10 +801,37 @@ function Invoices({ invoices, setInvoices, clients, projects }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
         <h2 style={{ margin: 0, fontSize: 24, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Invoices</h2>
-        <PrimaryBtn onClick={() => setShowAdd(true)}>+ New Invoice</PrimaryBtn>
+        <PrimaryBtn onClick={() => setShowAdd(true)}>+ New</PrimaryBtn>
       </div>
 
-      <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, overflow: "hidden" }}>
+      {/* Mobile card list */}
+      <div className="mobile-only" style={{ display: "none", flexDirection: "column", gap: 12 }}>
+        {invoices.map(inv => {
+          const client = clients.find(c => c.id === inv.clientId);
+          return (
+            <div key={inv.id} style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                <div>
+                  <div style={{ color: "#e2e8f0", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 600 }}>{inv.number}</div>
+                  <div style={{ color: "#8892a4", fontSize: 12, marginTop: 2 }}>{client?.name}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ color: "#4ade80", fontFamily: "'DM Mono', monospace", fontSize: 18, fontWeight: 600 }}>${inv.amount.toLocaleString()}</div>
+                  <Badge status={inv.status} />
+                </div>
+              </div>
+              <div style={{ color: "#6b7a8e", fontSize: 11, marginBottom: 10 }}>Due {inv.dueDate}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {inv.status !== "paid" && <button onClick={() => markPaid(inv.id)} style={{ flex: 1, background: "#4ade8020", border: "1px solid #4ade8040", borderRadius: 8, padding: "8px", color: "#4ade80", fontSize: 12, cursor: "pointer" }}>Mark Paid</button>}
+                {inv.status === "outstanding" && <button onClick={() => generateEmail(inv)} disabled={generating === inv.id} style={{ flex: 1, background: "#60a5fa20", border: "1px solid #60a5fa40", borderRadius: 8, padding: "8px", color: "#60a5fa", fontSize: 12, cursor: "pointer" }}>{generating === inv.id ? "Writing..." : "Draft Email"}</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table */}
+      <div className="desktop-only" style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#0a1020" }}>
@@ -826,15 +853,8 @@ function Invoices({ invoices, setInvoices, clients, projects }) {
                   <td style={{ padding: "16px 20px" }}><Badge status={inv.status} /></td>
                   <td style={{ padding: "16px 20px" }}>
                     <div style={{ display: "flex", gap: 8 }}>
-                      {inv.status !== "paid" && (
-                        <button onClick={() => markPaid(inv.id)} style={{ background: "#4ade8020", border: "1px solid #4ade8040", borderRadius: 6, padding: "5px 10px", color: "#4ade80", fontSize: 11, cursor: "pointer" }}>Mark Paid</button>
-                      )}
-                      {inv.status === "outstanding" && (
-                        <button onClick={() => generateEmail(inv)} disabled={generating === inv.id}
-                          style={{ background: "#60a5fa20", border: "1px solid #60a5fa40", borderRadius: 6, padding: "5px 10px", color: "#60a5fa", fontSize: 11, cursor: "pointer" }}>
-                          {generating === inv.id ? "Writing..." : "Draft Email"}
-                        </button>
-                      )}
+                      {inv.status !== "paid" && <button onClick={() => markPaid(inv.id)} style={{ background: "#4ade8020", border: "1px solid #4ade8040", borderRadius: 6, padding: "5px 10px", color: "#4ade80", fontSize: 11, cursor: "pointer" }}>Mark Paid</button>}
+                      {inv.status === "outstanding" && <button onClick={() => generateEmail(inv)} disabled={generating === inv.id} style={{ background: "#60a5fa20", border: "1px solid #60a5fa40", borderRadius: 6, padding: "5px 10px", color: "#60a5fa", fontSize: 11, cursor: "pointer" }}>{generating === inv.id ? "Writing..." : "Draft Email"}</button>}
                     </div>
                   </td>
                 </tr>
@@ -1691,10 +1711,14 @@ export default function App() {
           th, td { padding: 10px 12px !important; }
           .claude-panel { left: 8px !important; right: 8px !important; bottom: 80px !important; width: auto !important; height: 65vh !important; border-radius: 16px !important; }
           .claude-fab { bottom: 90px !important; right: 16px !important; }
+          .mobile-only { display: flex !important; }
+          .desktop-only { display: none !important; }
         }
         @media (min-width: 769px) {
           .mobile-nav { display: none !important; }
           .mobile-header { display: none !important; }
+          .mobile-only { display: none !important; }
+          .desktop-only { display: block !important; }
         }
       `}</style>
 
