@@ -1379,7 +1379,7 @@ RULES:
     <>
       {/* Floating Button */}
       {!open && (
-        <button onClick={() => setOpen(true)} style={{
+        <button className="claude-fab" onClick={() => setOpen(true)} style={{
           position: "fixed", bottom: 32, right: 32, zIndex: 900,
           width: 58, height: 58, borderRadius: "50%",
           background: "linear-gradient(135deg, #3b5bdb, #4c6ef5)",
@@ -1393,7 +1393,7 @@ RULES:
 
       {/* Command Panel */}
       {open && (
-        <div style={{
+        <div className="claude-panel" style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 1000,
           width: 420, height: 560,
           background: "#0a0f1e",
@@ -1689,6 +1689,8 @@ export default function App() {
           .mobile-header { display: flex !important; }
           table { font-size: 12px; }
           th, td { padding: 10px 12px !important; }
+          .claude-panel { left: 8px !important; right: 8px !important; bottom: 80px !important; width: auto !important; height: 65vh !important; border-radius: 16px !important; }
+          .claude-fab { bottom: 90px !important; right: 16px !important; }
         }
         @media (min-width: 769px) {
           .mobile-nav { display: none !important; }
