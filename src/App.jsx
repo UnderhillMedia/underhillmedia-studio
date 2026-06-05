@@ -414,7 +414,12 @@ function ClientDetail({ client, interactions, followups, setInteractions, setFol
     setFollowupDate("");
   };
 
-  const toggleFollowup = id => setFollowups(prev => prev.map(f => f.id === id ? { ...f, done: !f.done } : f));
+  const toggleFollowup = async id => {
+    const f = followups.find(f => f.id === id);
+    if (!f) return;
+    await supabase.from("followups").update({ done: !f.done }).eq("id", id);
+    setFollowups(prev => prev.map(f => f.id === id ? { ...f, done: !f.done } : f));
+  };
 
   const draftOutreach = async () => {
     setGenerating(true);
@@ -892,8 +897,9 @@ function Invoices({ invoices, setInvoices, clients, projects }) {
     setShowAdd(false);
   };
 
-  const markPaid = (id) => {
-    setInvoices(invoices.map(i => i.id === id ? { ...i, status: "paid" } : i));
+  const markPaid = async (id) => {
+    await supabase.from("invoices").update({ status: "paid" }).eq("id", id);
+    setInvoices(prev => prev.map(i => i.id === id ? { ...i, status: "paid" } : i));
   };
 
   const generateEmail = async (inv) => {
@@ -1007,7 +1013,10 @@ function Expenses({ expenses, setExpenses }) {
     setShowAdd(false);
   };
 
-  const deleteExpense = id => setExpenses(expenses.filter(e => e.id !== id));
+  const deleteExpense = async id => {
+    await supabase.from("expenses").delete().eq("id", id);
+    setExpenses(prev => prev.filter(e => e.id !== id));
+  };
 
   const analyzeDeductions = async () => {
     setAnalyzing(true);
@@ -1161,7 +1170,10 @@ function Mileage({ mileage, setMileage, clients }) {
     setShowAdd(false);
   };
 
-  const deleteTrip = id => setMileage(mileage.filter(m => m.id !== id));
+  const deleteTrip = async id => {
+    await supabase.from("mileage").delete().eq("id", id);
+    setMileage(prev => prev.filter(m => m.id !== id));
+  };
 
   const totalMiles = mileage.filter(m => m.deductible).reduce((s, m) => s + m.miles, 0);
   const deductionValue = totalMiles * IRS_RATE_2026;
