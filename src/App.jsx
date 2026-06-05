@@ -430,6 +430,8 @@ function ClientDetail({ client, interactions, followups, setInteractions, setFol
     await supabase.from("followups").update({ done: !f.done }).eq("id", id);
     setFollowups(prev => prev.map(f => f.id === id ? { ...f, done: !f.done } : f));
   };
+
+  const draftOutreach = async () => {
     setGenerating(true);
     const history = clientInteractions.map(i => `${i.date} (${i.type}): ${i.note}`).join("\n");
     const prompt = `Draft a short, natural follow-up outreach email from Nate at Underhillmedia to ${client.name} (${client.email}). Here is the interaction history:\n${history || "No prior interactions."}\nKeep it brief, warm but professional. Do not use dashes. Sign off as Nate.`;
