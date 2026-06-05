@@ -1290,32 +1290,6 @@ function Mileage({ mileage, setMileage, clients }) {
   );
 }
 
-// ── CALENDAR HELPERS ───────────────────────────────────────────────────────
-async function createCalendarEvent({ title, date, time = "09:00", duration = 60, description = "", location = "" }) {
-  const prompt = `Using Google Calendar MCP, create a calendar event with these details:
-Title: ${title}
-Date: ${date}
-Time: ${time}
-Duration: ${duration} minutes
-Description: ${description}
-Location: ${location}
-Create the event now and confirm it was created.`;
-  return callClaude([{ role: "user", content: prompt }],
-    "You are a calendar assistant. Use the Google Calendar MCP tools to create events. Be brief in confirmation. Never use dashes.");
-}
-
-async function getUpcomingEvents() {
-  const prompt = `Using Google Calendar MCP, fetch all events for the next 14 days and return them as a JSON array with this format:
-[{"title":"event name","date":"YYYY-MM-DD","time":"HH:MM","duration":60,"description":"","location":""}]
-Return ONLY the JSON array, no other text.`;
-  const result = await callClaude([{ role: "user", content: prompt }],
-    "You are a calendar assistant. Use Google Calendar MCP to fetch events. Return only valid JSON arrays.");
-  try {
-    const match = result.match(/\[[\s\S]*\]/);
-    return match ? JSON.parse(match[0]) : [];
-  } catch { return []; }
-}
-
 // ── CALENDAR ───────────────────────────────────────────────────────────────
 function Calendar({ clients, projects, invoices }) {
   const [events, setEvents] = useState([]);
@@ -1324,13 +1298,25 @@ function Calendar({ clients, projects, invoices }) {
   const [showAdd, setShowAdd] = useState(false);
   const [suggestion, setSuggestion] = useState("");
   const [suggesting, setSuggesting] = useState(false);
-  const [form, setForm] = useState({ title: "", date: "", time: "09:00", duration: "60", description: "", location: "" });
   const [result, setResult] = useState("");
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [form, setForm] = useState({ title: "", date: "", time: "09:00", duration: "60", description: "", location: "" });
+
+  const now = new Date();
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
 
   const loadEvents = async () => {
     setLoading(true);
-    const data = await getUpcomingEvents();
-    setEvents(data);
+    const prompt = `Using Google Calendar MCP, fetch ALL events for the next 60 days and return them as a JSON array:
+[{"title":"event name","date":"YYYY-MM-DD","time":"HH:MM","duration":60,"description":"","location":""}]
+Return ONLY the JSON array, no other text.`;
+    const res = await callClaude([{ role: "user", content: prompt }],
+      "You are a calendar assistant. Use Google Calendar MCP to fetch events. Return only valid JSON arrays.");
+    try {
+      const match = res.match(/\[[\s\S]*\]/);
+      setEvents(match ? JSON.parse(match[0]) : []);
+    } catch { setEvents([]); }
     setLoading(false);
   };
 
@@ -1339,7 +1325,10 @@ function Calendar({ clients, projects, invoices }) {
   const addEvent = async () => {
     if (!form.title || !form.date) return;
     setCreating(true);
-    const res = await createCalendarEvent({ ...form, duration: Number(form.duration) });
+    const prompt = `Using Google Calendar MCP, create a calendar event:
+Title: ${form.title}, Date: ${form.date}, Time: ${form.time}, Duration: ${form.duration} minutes, Description: ${form.description}, Location: ${form.location}. Confirm when done.`;
+    const res = await callClaude([{ role: "user", content: prompt }],
+      "You are a calendar assistant. Use Google Calendar MCP to create events. Be brief. Never use dashes.");
     setResult(res);
     setCreating(false);
     setShowAdd(false);
@@ -1349,139 +1338,200 @@ function Calendar({ clients, projects, invoices }) {
   const suggestTime = async () => {
     setSuggesting(true);
     const upcomingProjects = projects.filter(p => p.status === "in_progress").map(p => `${p.name} due ${p.dueDate}`).join(", ");
-    const prompt = `Look at Nate's Google Calendar for the next 14 days using the MCP tools. Then suggest the 3 best available time slots for a client meeting, considering his existing schedule and these active projects: ${upcomingProjects}. Keep it brief and practical. Never use dashes.`;
-    const res = await callClaude([{ role: "user", content: prompt }],
-      "You are a smart scheduling assistant with access to Google Calendar. Analyze the calendar and suggest optimal meeting times.");
+    const res = await callClaude([{ role: "user", content: `Look at Nate's Google Calendar for the next 14 days. Suggest the 3 best open slots for a client meeting, considering his schedule and these projects: ${upcomingProjects}. Be brief. Never use dashes.` }],
+      "You are a smart scheduling assistant with access to Google Calendar.");
     setSuggestion(res);
     setSuggesting(false);
   };
 
-  const quickAddFromProject = async (project) => {
+  const quickAdd = async (title, date, notes) => {
     setCreating(true);
-    const client = clients.find(c => c.id === project.clientId);
-    const res = await createCalendarEvent({
-      title: `📹 ${project.name} Deadline`,
-      date: project.dueDate,
-      time: "09:00",
-      duration: 30,
-      description: `Project deadline for ${client?.name || "client"}. ${project.notes || ""}`,
-    });
+    const prompt = `Using Google Calendar MCP, create: Title: "${title}", Date: ${date}, Time: 09:00, Duration: 30 minutes, Description: "${notes}". Confirm when done.`;
+    const res = await callClaude([{ role: "user", content: prompt }], "You are a calendar assistant. Use Google Calendar MCP. Be brief. Never use dashes.");
     setResult(res);
     setCreating(false);
     loadEvents();
   };
 
-  const quickAddFromInvoice = async (invoice) => {
-    setCreating(true);
-    const client = clients.find(c => c.id === invoice.clientId);
-    const res = await createCalendarEvent({
-      title: `💰 ${invoice.number} Due — ${client?.name}`,
-      date: invoice.dueDate,
-      time: "09:00",
-      duration: 15,
-      description: `Invoice ${invoice.number} for $${invoice.amount} due from ${client?.name}`,
-    });
-    setResult(res);
-    setCreating(false);
-    loadEvents();
-  };
-
+  // Calendar grid helpers
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
   const today = new Date().toISOString().split("T")[0];
-  const upcomingProjects = projects.filter(p => p.status === "in_progress" && p.dueDate >= today);
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  const getEventsForDay = (day) => {
+    const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const gcalEvents = events.filter(e => e.date === dateStr);
+    const projectDeadlines = projects.filter(p => p.dueDate === dateStr && p.status === "in_progress");
+    const invoiceDues = invoices.filter(i => i.dueDate === dateStr && i.status === "outstanding");
+    return { gcalEvents, projectDeadlines, invoiceDues, dateStr };
+  };
+
+  const prevMonth = () => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); } else setViewMonth(m => m - 1); };
+  const nextMonth = () => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); } else setViewMonth(m => m + 1); };
+
   const outstandingInvoices = invoices.filter(i => i.status === "outstanding");
+  const upcomingProjects = projects.filter(p => p.status === "in_progress");
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 24, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Calendar</h2>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={loadEvents} disabled={loading} style={{ background: "#1a2235", border: "1px solid #2a3550", borderRadius: 8, padding: "8px 14px", color: "#8892a4", fontSize: 12, cursor: "pointer" }}>
-            {loading ? "Loading..." : "↻ Refresh"}
+            {loading ? "Syncing..." : "↻ Sync Google"}
           </button>
           <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add Event</PrimaryBtn>
         </div>
       </div>
 
-      {/* Smart Schedule Suggestion */}
-      <div style={{ background: "linear-gradient(135deg, #1a1a2e, #16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: 20, marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: suggestion ? 14 : 0 }}>
-          <div>
-            <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Smart Scheduling</div>
-            <div style={{ color: "#6b7a8e", fontSize: 12 }}>Claude reads your calendar and suggests the best times for client meetings</div>
-          </div>
-          <button onClick={suggestTime} disabled={suggesting} style={{
-            background: "linear-gradient(135deg, #3b5bdb, #4c6ef5)", border: "none", borderRadius: 8,
-            padding: "9px 16px", color: "#fff", fontSize: 12, cursor: suggesting ? "default" : "pointer", whiteSpace: "nowrap", marginLeft: 16,
-          }}>{suggesting ? "Checking calendar..." : "◉ Suggest Times"}</button>
-        </div>
-        {suggestion && (
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
-            <pre style={{ color: "#c8d3e0", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0 }}>{suggestion}</pre>
-          </div>
-        )}
-      </div>
-
       {result && (
-        <div style={{ background: "#4ade8012", border: "1px solid #4ade8030", borderRadius: 10, padding: "12px 16px", marginBottom: 20, color: "#4ade80", fontSize: 13 }}>
+        <div style={{ background: "#4ade8012", border: "1px solid #4ade8030", borderRadius: 10, padding: "12px 16px", marginBottom: 16, color: "#4ade80", fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           {result}
-          <button onClick={() => setResult("")} style={{ background: "none", border: "none", color: "#4ade8080", cursor: "pointer", float: "right", fontSize: 14 }}>✕</button>
+          <button onClick={() => setResult("")} style={{ background: "none", border: "none", color: "#4ade8080", cursor: "pointer" }}>✕</button>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {/* Upcoming from Google Calendar */}
-        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Next 14 Days</h3>
-          {loading && <div style={{ color: "#6b7a8e", fontSize: 13 }}>Loading from Google Calendar...</div>}
-          {!loading && events.length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No events found. Connect Google Calendar or add events.</div>}
-          {events.map((e, i) => (
-            <div key={i} style={{ padding: "12px 0", borderBottom: "1px solid #1a2235" }}>
-              <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{e.title}</div>
-              <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 3 }}>{e.date} {e.time && `at ${e.time}`} {e.duration && `· ${e.duration}min`}</div>
-              {e.location && <div style={{ color: "#4c6ef5", fontSize: 11, marginTop: 2 }}>📍 {e.location}</div>}
-            </div>
+      {/* Smart scheduling bar */}
+      <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>Smart Scheduling</div>
+          <div style={{ color: "#6b7a8e", fontSize: 11 }}>Claude reads your calendar and finds the best open slots</div>
+        </div>
+        <button onClick={suggestTime} disabled={suggesting} style={{ background: "linear-gradient(135deg,#3b5bdb,#4c6ef5)", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 12, cursor: "pointer" }}>
+          {suggesting ? "Checking..." : "◉ Suggest Times"}
+        </button>
+      </div>
+      {suggestion && (
+        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
+          <pre style={{ color: "#c8d3e0", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0 }}>{suggestion}</pre>
+        </div>
+      )}
+
+      {/* Visual calendar grid */}
+      <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 14, overflow: "hidden", marginBottom: 20 }}>
+        {/* Month nav */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #1a2235" }}>
+          <button onClick={prevMonth} style={{ background: "none", border: "none", color: "#6b7a8e", cursor: "pointer", fontSize: 18, padding: "0 8px" }}>‹</button>
+          <div style={{ color: "#e2e8f0", fontSize: 16, fontFamily: "'Playfair Display', serif", fontWeight: 600 }}>{monthNames[viewMonth]} {viewYear}</div>
+          <button onClick={nextMonth} style={{ background: "none", border: "none", color: "#6b7a8e", cursor: "pointer", fontSize: 18, padding: "0 8px" }}>›</button>
+        </div>
+
+        {/* Day headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: "1px solid #1a2235" }}>
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+            <div key={d} style={{ padding: "8px 0", textAlign: "center", fontSize: 11, color: "#6b7a8e", letterSpacing: "0.08em", textTransform: "uppercase" }}>{d}</div>
           ))}
         </div>
 
-        {/* Quick add from projects and invoices */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Add Project Deadlines</h3>
-            {upcomingProjects.length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No active projects.</div>}
-            {upcomingProjects.map(p => (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+        {/* Day cells */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+          {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+            <div key={`empty-${i}`} style={{ minHeight: 90, borderRight: "1px solid #1a2235", borderBottom: "1px solid #1a2235", background: "#0a0f1e" }} />
+          ))}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1;
+            const { gcalEvents, projectDeadlines, invoiceDues, dateStr } = getEventsForDay(day);
+            const isToday = dateStr === today;
+            const hasEvents = gcalEvents.length + projectDeadlines.length + invoiceDues.length > 0;
+            const isSelected = selectedDay === dateStr;
+            const col = (firstDayOfMonth + i) % 7;
+            return (
+              <div key={day} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                style={{
+                  minHeight: 90, padding: "8px 6px",
+                  borderRight: col === 6 ? "none" : "1px solid #1a2235",
+                  borderBottom: "1px solid #1a2235",
+                  background: isSelected ? "#3b5bdb15" : isToday ? "#4ade8008" : "transparent",
+                  cursor: "pointer", position: "relative",
+                }}>
+                <div style={{
+                  width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isToday ? "#3b5bdb" : "transparent",
+                  color: isToday ? "#fff" : "#c8d3e0", fontSize: 13, fontWeight: isToday ? 600 : 400, marginBottom: 4,
+                }}>{day}</div>
+                {gcalEvents.slice(0,2).map((e, idx) => (
+                  <div key={idx} style={{ background: "#3b5bdb33", border: "1px solid #3b5bdb55", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#7c9ef8", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                    {e.time && <span style={{ opacity: 0.7 }}>{e.time.slice(0,5)} </span>}{e.title}
+                  </div>
+                ))}
+                {projectDeadlines.map((p, idx) => (
+                  <div key={idx} style={{ background: "#f8717133", border: "1px solid #f8717155", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#f87171", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                    📹 {p.name}
+                  </div>
+                ))}
+                {invoiceDues.map((inv, idx) => {
+                  const client = clients.find(c => c.id === inv.clientId);
+                  return (
+                    <div key={idx} style={{ background: "#facc1522", border: "1px solid #facc1544", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#facc15", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                      💰 {client?.name}
+                    </div>
+                  );
+                })}
+                {(gcalEvents.length + projectDeadlines.length + invoiceDues.length) > 3 && (
+                  <div style={{ fontSize: 9, color: "#6b7a8e", padding: "1px 5px" }}>+{(gcalEvents.length + projectDeadlines.length + invoiceDues.length) - 3} more</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Selected day detail */}
+      {selectedDay && (() => {
+        const day = parseInt(selectedDay.split("-")[2]);
+        const { gcalEvents, projectDeadlines, invoiceDues } = getEventsForDay(day);
+        return (
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 14, color: "#e2e8f0" }}>{new Date(selectedDay + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
+              <button onClick={() => { setForm(f => ({ ...f, date: selectedDay })); setShowAdd(true); }}
+                style={{ background: "#3b5bdb22", border: "1px solid #3b5bdb44", borderRadius: 8, padding: "5px 12px", color: "#7c9ef8", fontSize: 12, cursor: "pointer" }}>+ Add Event</button>
+            </div>
+            {gcalEvents.length === 0 && projectDeadlines.length === 0 && invoiceDues.length === 0 && (
+              <div style={{ color: "#3a4a60", fontSize: 13 }}>Nothing scheduled. Tap + Add Event to create one.</div>
+            )}
+            {gcalEvents.map((e, i) => (
+              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#3b5bdb", flexShrink: 0 }} />
                 <div>
-                  <div style={{ color: "#e2e8f0", fontSize: 13 }}>{p.name}</div>
-                  <div style={{ color: "#6b7a8e", fontSize: 11 }}>Due {p.dueDate}</div>
+                  <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{e.title}</div>
+                  <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>{e.time} {e.duration && `· ${e.duration}min`} {e.location && `· ${e.location}`}</div>
                 </div>
-                <button onClick={() => quickAddFromProject(p)} disabled={creating}
-                  style={{ background: "#60a5fa20", border: "1px solid #60a5fa40", borderRadius: 6, padding: "5px 10px", color: "#60a5fa", fontSize: 11, cursor: "pointer" }}>
-                  + Calendar
-                </button>
               </div>
             ))}
-          </div>
-
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Add Invoice Reminders</h3>
-            {outstandingInvoices.length === 0 && <div style={{ color: "#4ade80", fontSize: 13 }}>No outstanding invoices.</div>}
-            {outstandingInvoices.map(inv => {
+            {projectDeadlines.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#f87171", flexShrink: 0 }} />
+                <div>
+                  <div style={{ color: "#f87171", fontSize: 13, fontWeight: 500 }}>📹 {p.name} — Deadline</div>
+                  <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>{clients.find(c => c.id === p.clientId)?.name}</div>
+                </div>
+                <button onClick={() => quickAdd(`📹 ${p.name} Deadline`, selectedDay, p.notes || "")} style={{ marginLeft: "auto", background: "#f8717120", border: "1px solid #f8717140", borderRadius: 6, padding: "4px 10px", color: "#f87171", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>Add to GCal</button>
+              </div>
+            ))}
+            {invoiceDues.map((inv, i) => {
               const client = clients.find(c => c.id === inv.clientId);
               return (
-                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                  <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#facc15", flexShrink: 0 }} />
                   <div>
-                    <div style={{ color: "#e2e8f0", fontSize: 13 }}>{inv.number} · {client?.name}</div>
-                    <div style={{ color: "#facc15", fontSize: 11 }}>${inv.amount} due {inv.dueDate}</div>
+                    <div style={{ color: "#facc15", fontSize: 13, fontWeight: 500 }}>💰 {inv.number} Due — {client?.name}</div>
+                    <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>${inv.amount.toLocaleString()}</div>
                   </div>
-                  <button onClick={() => quickAddFromInvoice(inv)} disabled={creating}
-                    style={{ background: "#facc1520", border: "1px solid #facc1540", borderRadius: 6, padding: "5px 10px", color: "#facc15", fontSize: 11, cursor: "pointer" }}>
-                    + Calendar
-                  </button>
+                  <button onClick={() => quickAdd(`💰 ${inv.number} Due — ${client?.name}`, selectedDay, `Invoice for $${inv.amount}`)} style={{ marginLeft: "auto", background: "#facc1520", border: "1px solid #facc1540", borderRadius: 6, padding: "4px 10px", color: "#facc15", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>Add to GCal</button>
                 </div>
               );
             })}
           </div>
-        </div>
+        );
+      })()}
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 20, fontSize: 11, color: "#6b7a8e", marginBottom: 20 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#3b5bdb33", border: "1px solid #3b5bdb55", display: "inline-block" }} />Google Calendar</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#f8717133", border: "1px solid #f8717155", display: "inline-block" }} />Project Deadlines</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#facc1522", border: "1px solid #facc1544", display: "inline-block" }} />Invoice Due</span>
       </div>
 
       {showAdd && (
@@ -1498,7 +1548,7 @@ function Calendar({ clients, projects, invoices }) {
           <InputField label="Description" value={form.description} onChange={v => setForm({ ...form, description: v })} placeholder="Optional notes" />
           <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 8 }}>
             <GhostBtn onClick={() => setShowAdd(false)}>Cancel</GhostBtn>
-            <PrimaryBtn onClick={addEvent}>{creating ? "Creating..." : "Add to Calendar"}</PrimaryBtn>
+            <PrimaryBtn onClick={addEvent}>{creating ? "Creating..." : "Add to Google Calendar"}</PrimaryBtn>
           </div>
         </Modal>
       )}
