@@ -390,16 +390,26 @@ const INITIAL_FOLLOWUPS = [
   { id: 2, clientId: 3, note: "Check back with Summit Realty — no response to intro email", dueDate: "2026-06-08", done: false },
 ];
 
-function ClientDetail({ client, interactions, followups, setInteractions, setFollowups, onClose, generating, setGenerating }) {
+function ClientDetail({ client, interactions, followups, setInteractions, setFollowups, setClients, onClose, generating, setGenerating }) {
   const [tab, setTab] = useState("log");
   const [newNote, setNewNote] = useState("");
   const [noteType, setNoteType] = useState("Note");
   const [newFollowup, setNewFollowup] = useState("");
   const [followupDate, setFollowupDate] = useState("");
   const [emailDraft, setEmailDraft] = useState("");
+  const [currentStage, setCurrentStage] = useState(client.pipelineStage || "Active");
+  const [savingStage, setSavingStage] = useState(false);
 
   const clientInteractions = interactions.filter(i => i.clientId === client.id).sort((a, b) => b.date.localeCompare(a.date));
   const clientFollowups = followups.filter(f => f.clientId === client.id);
+
+  const changeStage = async (newStage) => {
+    setSavingStage(true);
+    setCurrentStage(newStage);
+    await supabase.from("clients").update({ pipeline_stage: newStage }).eq("id", client.id);
+    setClients(prev => prev.map(c => c.id === client.id ? { ...c, pipelineStage: newStage } : c));
+    setSavingStage(false);
+  };
 
   const addInteraction = () => {
     if (!newNote.trim()) return;
@@ -420,8 +430,6 @@ function ClientDetail({ client, interactions, followups, setInteractions, setFol
     await supabase.from("followups").update({ done: !f.done }).eq("id", id);
     setFollowups(prev => prev.map(f => f.id === id ? { ...f, done: !f.done } : f));
   };
-
-  const draftOutreach = async () => {
     setGenerating(true);
     const history = clientInteractions.map(i => `${i.date} (${i.type}): ${i.note}`).join("\n");
     const prompt = `Draft a short, natural follow-up outreach email from Nate at Underhillmedia to ${client.name} (${client.email}). Here is the interaction history:\n${history || "No prior interactions."}\nKeep it brief, warm but professional. Do not use dashes. Sign off as Nate.`;
@@ -448,6 +456,29 @@ function ClientDetail({ client, interactions, followups, setInteractions, setFol
               <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7a8e", cursor: "pointer", fontSize: 20 }}>✕</button>
             </div>
           </div>
+
+          {/* Pipeline stage selector */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 10, color: "#6b7a8e", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>Pipeline Stage</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {PIPELINE_STAGES.map(stage => {
+                const color = { Lead: "#facc15", Contacted: "#fb923c", "Proposal Sent": "#60a5fa", Active: "#4ade80", "Repeat Client": "#c084fc", Inactive: "#6b7280" }[stage] || "#6b7280";
+                const isActive = currentStage === stage;
+                return (
+                  <button key={stage} onClick={() => changeStage(stage)} style={{
+                    padding: "5px 12px", borderRadius: 20, fontSize: 11, cursor: "pointer",
+                    background: isActive ? `${color}25` : "transparent",
+                    border: `1px solid ${isActive ? color : "#2a3550"}`,
+                    color: isActive ? color : "#6b7a8e",
+                    fontWeight: isActive ? 600 : 400,
+                    transition: "all 0.15s",
+                  }}>{stage}</button>
+                );
+              })}
+              {savingStage && <span style={{ color: "#6b7a8e", fontSize: 11, alignSelf: "center" }}>Saving...</span>}
+            </div>
+          </div>
+
           <div style={{ display: "flex", gap: 24, marginBottom: 0 }}>
             {["log", "followups", "email"].map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
@@ -785,6 +816,7 @@ Extract up to 30 contacts. Only include people Nate has actually emailed back an
           followups={followups}
           setInteractions={setInteractions}
           setFollowups={setFollowups}
+          setClients={setClients}
           onClose={() => setSelectedClient(null)}
           generating={generating}
           setGenerating={setGenerating}
