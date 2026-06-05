@@ -217,7 +217,8 @@ function GhostBtn({ onClick, children }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────
-function Dashboard({ clients, projects, invoices, expenses, mileage, followups }) {
+function Dashboard({ clients, projects, invoices, expenses, mileage, followups, setActive }) {
+  const today = new Date().toISOString().split("T")[0];
   const totalOutstanding = invoices.filter(i => i.status === "outstanding").reduce((s, i) => s + i.amount, 0);
   const totalEarned = invoices.filter(i => i.status === "paid").reduce((s, i) => s + i.amount, 0);
   const activeProjects = projects.filter(p => p.status === "in_progress").length;
@@ -225,63 +226,141 @@ function Dashboard({ clients, projects, invoices, expenses, mileage, followups }
   const totalMiles = mileage.filter(m => m.deductible).reduce((s, m) => s + m.miles, 0);
   const mileageDeduction = totalMiles * IRS_RATE_2026;
 
+  const overdueInvoices = invoices.filter(i => i.status === "outstanding" && i.dueDate && i.dueDate < today);
+  const pendingFollowups = followups.filter(f => !f.done && f.dueDate && f.dueDate <= today);
+  const upcomingDeadlines = projects.filter(p => p.status === "in_progress" && p.dueDate && p.dueDate <= new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  const [digest, setDigest] = useState(null);
+  const [loadingDigest, setLoadingDigest] = useState(false);
+
+  const generateDigest = async () => {
+    setLoadingDigest(true);
+    const overdueList = overdueInvoices.map(i => { const c = clients.find(x => x.id === i.clientId); return `${i.number} from ${c?.name} for $${i.amount} (due ${i.dueDate})`; }).join(", ");
+    const followupList = pendingFollowups.map(f => { const c = clients.find(x => x.id === f.clientId); return `${c?.name}: ${f.note}`; }).join(", ");
+    const projectList = upcomingDeadlines.map(p => { const c = clients.find(x => x.id === p.clientId); return `${p.name} for ${c?.name} due ${p.dueDate}`; }).join(", ");
+    const prompt = `Give Nate a brief, practical morning business digest for Underhillmedia. Be direct and actionable, like a smart assistant not a cheerleader. Max 5 bullet points.
+Overdue invoices: ${overdueList || "none"}
+Follow-ups due today: ${followupList || "none"}
+Projects due this week: ${projectList || "none"}
+Total outstanding: $${totalOutstanding}
+Do not use dashes. Focus on what actually needs action today.`;
+    const result = await callClaude([{ role: "user", content: prompt }]);
+    setDigest(result);
+    setLoadingDigest(false);
+  };
+
   return (
     <div>
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ margin: 0, fontSize: 28, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Good morning, Nate.</h2>
-        <p style={{ margin: "6px 0 0", color: "#6b7a8e", fontSize: 14 }}>Here's what's happening at Underhillmedia.</p>
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 26, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>{greeting}, Nate.</h2>
+        <p style={{ margin: "4px 0 0", color: "#6b7a8e", fontSize: 13 }}>Here's what's happening at Underhillmedia.</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
+      {/* Overdue Invoice Alert */}
+      {overdueInvoices.length > 0 && (
+        <div style={{ background: "#f8717112", border: "1px solid #f8717140", borderRadius: 12, padding: "14px 18px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ color: "#f87171", fontSize: 13, fontWeight: 600 }}>{overdueInvoices.length} overdue invoice{overdueInvoices.length > 1 ? "s" : ""}</div>
+              <div style={{ color: "#f8717199", fontSize: 11 }}>
+                {overdueInvoices.map(i => { const c = clients.find(x => x.id === i.clientId); return `${c?.name} $${i.amount.toLocaleString()}`; }).join(" · ")}
+              </div>
+            </div>
+          </div>
+          <button onClick={() => setActive("invoices")} style={{ background: "#f8717120", border: "1px solid #f8717140", borderRadius: 8, padding: "6px 14px", color: "#f87171", fontSize: 12, cursor: "pointer" }}>View Invoices</button>
+        </div>
+      )}
+
+      {/* Pending follow-ups alert */}
+      {pendingFollowups.length > 0 && (
+        <div style={{ background: "#facc1510", border: "1px solid #facc1530", borderRadius: 12, padding: "14px 18px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>📋</span>
+            <div>
+              <div style={{ color: "#facc15", fontSize: 13, fontWeight: 600 }}>{pendingFollowups.length} follow-up{pendingFollowups.length > 1 ? "s" : ""} due today</div>
+              <div style={{ color: "#facc1599", fontSize: 11 }}>{pendingFollowups.slice(0, 2).map(f => { const c = clients.find(x => x.id === f.clientId); return c?.name; }).filter(Boolean).join(", ")}{pendingFollowups.length > 2 ? ` +${pendingFollowups.length - 2} more` : ""}</div>
+            </div>
+          </div>
+          <button onClick={() => setActive("clients")} style={{ background: "#facc1520", border: "1px solid #facc1540", borderRadius: 8, padding: "6px 14px", color: "#facc15", fontSize: 12, cursor: "pointer" }}>View Clients</button>
+        </div>
+      )}
+
+      {/* Morning digest */}
+      <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: 20, marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: digest ? 14 : 0 }}>
+          <div>
+            <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 2 }}>Daily Digest</div>
+            <div style={{ color: "#6b7a8e", fontSize: 12 }}>Claude's take on what needs your attention today</div>
+          </div>
+          <button onClick={generateDigest} disabled={loadingDigest} style={{ background: "linear-gradient(135deg,#3b5bdb,#4c6ef5)", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", marginLeft: 12 }}>
+            {loadingDigest ? "Thinking..." : "◉ Get Digest"}
+          </button>
+        </div>
+        {digest && (
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+            <pre style={{ color: "#c8d3e0", fontSize: 13, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0 }}>{digest}</pre>
+          </div>
+        )}
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
         <StatCard label="Outstanding" value={`$${totalOutstanding.toLocaleString()}`} sub="awaiting payment" accent="#facc15" />
         <StatCard label="Total Earned" value={`$${totalEarned.toLocaleString()}`} sub="all time paid" accent="#4ade80" />
         <StatCard label="Active Projects" value={activeProjects} sub="in progress" accent="#60a5fa" />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 36 }}>
-        <StatCard label="Expense Deductions" value={`$${totalDeductions.toFixed(2)}`} sub="deductible this year" accent="#c084fc" />
-        <StatCard label="Mileage Deduction" value={`$${mileageDeduction.toFixed(0)}`} sub={`${totalMiles.toFixed(1)} miles @ $${IRS_RATE_2026}/mi`} accent="#fb923c" />
-        <StatCard label="Total Clients" value={clients.length} sub={`${clients.filter(c => c.status === "active").length} active`} accent="#38bdf8" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
+        <StatCard label="Deductions" value={`$${totalDeductions.toFixed(0)}`} sub="deductible this year" accent="#c084fc" />
+        <StatCard label="Mileage" value={`$${mileageDeduction.toFixed(0)}`} sub={`${totalMiles.toFixed(1)} mi`} accent="#fb923c" />
+        <StatCard label="Clients" value={clients.length} sub={`${clients.filter(c => c.status === "active").length} active`} accent="#38bdf8" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 24 }}>
-        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 24 }}>
-          <h3 style={{ margin: "0 0 20px", fontSize: 14, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Active Projects</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20 }}>
+        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Active Projects</h3>
+          {projects.filter(p => p.status === "in_progress").length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No active projects.</div>}
           {projects.filter(p => p.status === "in_progress").map(p => {
             const client = clients.find(c => c.id === p.clientId);
+            const isUrgent = p.dueDate && p.dueDate <= new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
             return (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #1a2235" }}>
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #1a2235" }}>
                 <div>
-                  <div style={{ color: "#e2e8f0", fontSize: 14, marginBottom: 3 }}>{p.name}</div>
-                  <div style={{ color: "#6b7a8e", fontSize: 12 }}>{client?.name} · Due {p.dueDate}</div>
-                  {p.notes && <div style={{ color: "#facc1599", fontSize: 11, marginTop: 3 }}>{p.notes}</div>}
+                  <div style={{ color: "#e2e8f0", fontSize: 14, marginBottom: 2 }}>{p.name}</div>
+                  <div style={{ color: isUrgent ? "#f87171" : "#6b7a8e", fontSize: 11 }}>{client?.name} · Due {p.dueDate}{isUrgent ? " ⚠" : ""}</div>
+                  {p.notes && <div style={{ color: "#facc1580", fontSize: 11, marginTop: 2 }}>{p.notes}</div>}
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ color: "#60a5fa", fontFamily: "'DM Mono', monospace", fontSize: 14 }}>${p.value.toLocaleString()}</div>
-                </div>
+                <div style={{ color: "#60a5fa", fontFamily: "'DM Mono', monospace", fontSize: 14 }}>${p.value.toLocaleString()}</div>
               </div>
             );
           })}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 24 }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 14, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Outstanding Invoices</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Outstanding</h3>
+            {invoices.filter(i => i.status === "outstanding").length === 0 && <div style={{ color: "#4ade80", fontSize: 13 }}>All clear.</div>}
             {invoices.filter(i => i.status === "outstanding").map(inv => {
               const client = clients.find(c => c.id === inv.clientId);
+              const isOverdue = inv.dueDate && inv.dueDate < today;
               return (
-                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
+                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #1a2235" }}>
                   <div>
-                    <div style={{ color: "#e2e8f0", fontSize: 13 }}>{inv.number}</div>
-                    <div style={{ color: "#6b7a8e", fontSize: 11 }}>{client?.name}</div>
+                    <div style={{ color: "#e2e8f0", fontSize: 13 }}>{client?.name}</div>
+                    <div style={{ color: isOverdue ? "#f87171" : "#6b7a8e", fontSize: 11 }}>{isOverdue ? "OVERDUE" : `Due ${inv.dueDate}`}</div>
                   </div>
-                  <div style={{ color: "#facc15", fontFamily: "'DM Mono', monospace", fontSize: 14 }}>${inv.amount.toLocaleString()}</div>
+                  <div style={{ color: isOverdue ? "#f87171" : "#facc15", fontFamily: "'DM Mono', monospace", fontSize: 14 }}>${inv.amount.toLocaleString()}</div>
                 </div>
               );
             })}
-            {invoices.filter(i => i.status === "outstanding").length === 0 && <div style={{ color: "#4ade80", fontSize: 13 }}>All clear.</div>}
           </div>
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 24 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 14, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Recent Expenses</h3>
+          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20 }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 13, color: "#8892a4", letterSpacing: "0.1em", textTransform: "uppercase" }}>Recent Expenses</h3>
+            {expenses.length === 0 && <div style={{ color: "#3a4a60", fontSize: 13 }}>No expenses logged.</div>}
             {expenses.slice(-3).reverse().map(e => (
               <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #1a2235" }}>
                 <div style={{ color: "#c8d3e0", fontSize: 12 }}>{e.description}</div>
@@ -1961,7 +2040,7 @@ export default function App() {
 
   const renderPage = () => {
     switch (active) {
-      case "dashboard": return <Dashboard clients={clients} projects={projects} invoices={invoices} expenses={expenses} mileage={mileage} followups={followups} />;
+      case "dashboard": return <Dashboard clients={clients} projects={projects} invoices={invoices} expenses={expenses} mileage={mileage} followups={followups} setActive={setActive} />;
       case "clients": return <Clients clients={clients} setClients={setClients} interactions={interactions} setInteractions={setInteractions} followups={followups} setFollowups={setFollowups} />;
       case "projects": return <Projects projects={projects} setProjects={setProjects} clients={clients} />;
       case "invoices": return <Invoices invoices={invoices} setInvoices={setInvoices} clients={clients} projects={projects} />;
