@@ -242,19 +242,19 @@ function Dashboard({ clients, projects, invoices, expenses, mileage, followups, 
 
   const generateDigest = async () => {
     setLoadingDigest(true);
-    const overdueList = overdueInvoices.map(i => { const c = clients.find(x => x.id === i.clientId); return `${i.number} from ${c?.name} for $${i.amount} (due ${i.dueDate})`; }).join(", ");
-    const followupList = pendingFollowups.map(f => { const c = clients.find(x => x.id === f.clientId); return `${c?.name}: ${f.note}`; }).join(", ");
-    const projectList = upcomingDeadlines.map(p => { const c = clients.find(x => x.id === p.clientId); return `${p.name} for ${c?.name} due ${p.dueDate}`; }).join(", ");
-    const prompt = `Give Nate a brief, practical morning business digest for Underhillmedia. Be direct and actionable, like a smart assistant not a cheerleader. Max 5 bullet points.
-Overdue invoices: ${overdueList || "none"}
-Follow-ups due today: ${followupList || "none"}
-Projects due this week: ${projectList || "none"}
-Total outstanding: $${totalOutstanding}
-Do not use dashes. Focus on what actually needs action today.`;
-    const result = await callClaude([{ role: "user", content: prompt }]);
-    setDigest(result);
-    setLoadingDigest(false);
-    return result;
+    try {
+      const overdueList = overdueInvoices.map(i => { const c = clients.find(x => x.id === i.clientId); return `${i.number} from ${c?.name} for $${i.amount} (due ${i.dueDate})`; }).join(", ");
+      const followupList = pendingFollowups.map(f => { const c = clients.find(x => x.id === f.clientId); return `${c?.name}: ${f.note}`; }).join(", ");
+      const projectList = upcomingDeadlines.map(p => { const c = clients.find(x => x.id === p.clientId); return `${p.name} for ${c?.name} due ${p.dueDate}`; }).join(", ");
+      const prompt = `Give Nate a brief, practical morning business digest for Underhillmedia. Be direct and actionable. Max 5 bullet points. Overdue invoices: ${overdueList || "none"}. Follow-ups due today: ${followupList || "none"}. Projects due this week: ${projectList || "none"}. Total outstanding: $${totalOutstanding}. Do not use dashes.`;
+      const result = await callClaude([{ role: "user", content: prompt }]);
+      setDigest(result);
+      setLoadingDigest(false);
+      return result;
+    } catch (e) {
+      setLoadingDigest(false);
+      return "Could not generate digest right now.";
+    }
   };
 
   const sendDigestEmail = async () => {
@@ -262,50 +262,22 @@ Do not use dashes. Focus on what actually needs action today.`;
     let text = digest;
     if (!text) text = await generateDigest();
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const htmlBody = `
-      <div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2a;">
-        <div style="border-bottom: 2px solid #3b5bdb; padding-bottom: 12px; margin-bottom: 24px;">
-          <div style="font-size: 11px; letter-spacing: 0.2em; color: #3b5bdb; text-transform: uppercase; font-weight: 600;">Underhillmedia Studio</div>
-          <h1 style="margin: 4px 0 0; font-size: 22px; color: #0f1623;">Daily Digest — ${today}</h1>
-        </div>
-        <div style="background: #f8f9ff; border-left: 4px solid #3b5bdb; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
-          <pre style="margin: 0; font-family: -apple-system, sans-serif; font-size: 14px; line-height: 1.8; white-space: pre-wrap; color: #1a1a2a;">${text}</pre>
-        </div>
-        <div style="display: flex; gap: 16px; margin-bottom: 24px;">
-          <div style="flex: 1; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 14px; text-align: center;">
-            <div style="font-size: 11px; color: #92400e; text-transform: uppercase; letter-spacing: 0.08em;">Outstanding</div>
-            <div style="font-size: 24px; font-weight: 700; color: #d97706; margin: 4px 0;">$${totalOutstanding.toLocaleString()}</div>
-          </div>
-          <div style="flex: 1; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; text-align: center;">
-            <div style="font-size: 11px; color: #166534; text-transform: uppercase; letter-spacing: 0.08em;">Active Projects</div>
-            <div style="font-size: 24px; font-weight: 700; color: #16a34a; margin: 4px 0;">${activeProjects}</div>
-          </div>
-          <div style="flex: 1; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; text-align: center;">
-            <div style="font-size: 11px; color: #991b1b; text-transform: uppercase; letter-spacing: 0.08em;">Overdue</div>
-            <div style="font-size: 24px; font-weight: 700; color: #dc2626; margin: 4px 0;">${overdueInvoices.length}</div>
-          </div>
-        </div>
-        <div style="text-align: center; padding-top: 16px; border-top: 1px solid #e5e7eb;">
-          <a href="https://underhillmedia-studio.vercel.app" style="background: #3b5bdb; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Underhillmedia Studio</a>
-        </div>
-      </div>`;
 
     try {
-      await fetch("https://api.anthropic.com/v1/messages", {
+      await fetch("/api/claude", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: ANTHROPIC_MODEL,
           max_tokens: 100,
-          system: "You are an email assistant. Use Gmail MCP to send the email exactly as instructed.",
-          messages: [{ role: "user", content: `Send an email to nate@underhillmedia.com with subject "Underhillmedia Daily Digest — ${today}" and this HTML body: ${htmlBody}` }],
-          mcp_servers: MCP_SERVERS,
+          system: "You are an email assistant. Use Gmail MCP to send emails. Be brief.",
+          messages: [{ role: "user", content: `Send a plain text email to nate@underhillmedia.com with subject "Underhillmedia Daily Digest - ${today}" and this body:\n\n${text}\n\nOutstanding: $${totalOutstanding.toLocaleString()}\nActive Projects: ${activeProjects}\nOverdue Invoices: ${overdueInvoices.length}\n\nOpen your app: https://underhillmedia-studio.vercel.app` }],
         }),
       });
       setDigestSent(true);
       setTimeout(() => setDigestSent(false), 4000);
     } catch (e) {
-      console.error(e);
+      console.error("Email error:", e);
     }
     setSendingDigest(false);
   };
