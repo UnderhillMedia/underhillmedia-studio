@@ -69,15 +69,22 @@ const STATUS_COLORS = {
 };
 
 function callClaude(messages, systemPrompt = "") {
-  return fetch("https://api.anthropic.com/v1/messages", {
+  const isLocal = window.location.hostname === "localhost";
+  const endpoint = isLocal
+    ? "https://api.anthropic.com/v1/messages"
+    : "/api/claude";
+
+  const headers = { "Content-Type": "application/json" };
+  if (isLocal) headers["x-api-key"] = "";
+
+  return fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
       max_tokens: 1000,
       system: systemPrompt || "You are a helpful business assistant for Nate at Underhillmedia, a video editing and content creation company. Be concise and professional. Never use dashes in your responses.",
       messages,
-      mcp_servers: MCP_SERVERS,
     }),
   })
     .then((r) => r.json())
