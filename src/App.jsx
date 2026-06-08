@@ -1852,32 +1852,137 @@ RULES:
     }
   };
 
+  const parseIntent = (text) => {
+    const t = text.toLowerCase();
+    const today = new Date().toISOString().split("T")[0];
+
+    // Add project
+    if (t.includes("add") && (t.includes("project") || t.includes("job"))) {
+      const valueMatch = text.match(/\$?([\d,]+)/);
+      const dateMatch = text.match(/(?:due|by|deadline)?\s*(?:june|july|august|sept|oct|nov|dec|jan|feb|mar|apr|may)\s+\d+/i) ||
+                        text.match(/\d{4}-\d{2}-\d{2}/) ||
+                        text.match(/(?:in\s+)?(\d+)\s+(?:days?|weeks?)/i);
+      const clientMatch = clients.find(c => text.toLowerCase().includes(c.name.toLowerCase()));
+
+      let dueDate = "";
+      if (dateMatch) {
+        const raw = dateMatch[0];
+        if (raw.match(/\d{4}-\d{2}-\d{2}/)) dueDate = raw;
+        else {
+          const months = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,sept:9,sep:9,oct:10,nov:11,dec:12 };
+          const parts = raw.match(/(\w+)\s+(\d+)/i);
+          if (parts) {
+            const m = months[parts[1].toLowerCase().slice(0,3)];
+            if (m) dueDate = `2026-${String(m).padStart(2,"0")}-${String(parts[2]).padStart(2,"0")}`;
+          }
+        }
+      }
+
+      // Extract project name — text between "project" and "$" or "due" or end
+      let name = text.replace(/add\s+(a\s+)?project\s+for\s+/i, "").replace(/add\s+(a\s+)?project\s+/i, "");
+      name = name.replace(/,?\s*\$[\d,]+.*$/i, "").replace(/,?\s*due.*/i, "").trim();
+
+      return {
+        type: "add_project",
+        data: {
+          name: name || "New Project",
+          value: valueMatch ? valueMatch[1].replace(",","") : "0",
+          dueDate: dueDate || "",
+          status: "in_progress",
+          clientId: clientMatch?.id || null,
+          notes: "",
+        },
+        reply: `Added project "${name || "New Project"}"${clientMatch ? ` for ${clientMatch.name}` : ""}${valueMatch ? ` ($${valueMatch[1]})` : ""}${dueDate ? `, due ${dueDate}` : ""}.`
+      };
+    }
+
+    // Log mileage
+    if ((t.includes("log") || t.includes("add")) && (t.includes("mile") || t.includes("trip") || t.includes("drove"))) {
+      const miles = text.match(/([\d.]+)\s*(?:miles?|mi)/i)?.[1] || "0";
+      const toMatch = text.match(/to\s+([^,]+?)(?:\s*,|\s*\d|\s*mile|$)/i)?.[1]?.trim();
+      const clientMatch = clients.find(c => text.toLowerCase().includes(c.name.toLowerCase()));
+      const purpose = text.match(/(?:for|purpose:?)\s+(.+?)(?:\s*,|\s*\d|$)/i)?.[1] || "Business";
+      return {
+        type: "add_mileage",
+        data: { miles, to: toMatch || "Destination", from: "Home", purpose, clientId: clientMatch?.id || null, deductible: !t.includes("personal") },
+        reply: `Logged ${miles} miles to ${toMatch || "destination"}. That's $${(parseFloat(miles) * 0.70).toFixed(2)} in IRS deduction.`
+      };
+    }
+
+    // Add expense
+    if ((t.includes("add") || t.includes("log")) && (t.includes("expense") || t.includes("spent") || t.includes("paid"))) {
+      const amount = text.match(/\$?([\d.]+)/)?.[1] || "0";
+      const desc = text.replace(/add\s+(an?\s+)?expense\s*/i,"").replace(/log\s+(an?\s+)?expense\s*/i,"").replace(/\$[\d.]+/g,"").replace(/,/g,"").trim() || "Expense";
+      const cats = { software:"Software & Subscriptions", equipment:"Equipment & Gear", gear:"Equipment & Gear", storage:"Storage & Drives", office:"Office & Supplies", travel:"Travel & Transport", marketing:"Marketing & Advertising", meal:"Meals & Entertainment", food:"Meals & Entertainment" };
+      const cat = Object.entries(cats).find(([k]) => t.includes(k))?.[1] || "Other";
+      return {
+        type: "add_expense",
+        data: { description: desc, amount, category: cat, deductible: !t.includes("personal"), date: today, notes: "" },
+        reply: `Logged $${amount} expense: ${desc}.`
+      };
+    }
+
+    // Mark invoice paid
+    if (t.includes("paid") || t.includes("mark") && t.includes("paid")) {
+      const inv = invoices.find(i => text.toLowerCase().includes(i.number.toLowerCase()) || (i.clientId && clients.find(c => c.id === i.clientId && text.toLowerCase().includes(c.name.toLowerCase()))));
+      if (inv) return {
+        type: "mark_invoice_paid",
+        data: { invoiceId: inv.id },
+        reply: `Marked ${inv.number} as paid.`
+      };
+    }
+
+    // Navigate
+    const pages = { dashboard:["dashboard","home"], clients:["clients","crm"], projects:["projects"], invoices:["invoices"], expenses:["expenses"], mileage:["mileage","miles"], calendar:["calendar"], contracts:["contracts"] };
+    for (const [page, keywords] of Object.entries(pages)) {
+      if (keywords.some(k => t.includes(k))) return { type: "navigate", data: { page }, reply: `Opening ${page}.` };
+    }
+
+    return null;
+  };
+
   const send = async () => {
     if (!input.trim() || loading) return;
     const userText = input.trim();
     setInput("");
-    setLoading(true);
+
     const newMessages = [...messages, { role: "user", content: userText }];
     setMessages(newMessages);
 
-    const systemPrompt = buildContext();
-    const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
-
-    const raw = await callClaude(apiMessages, systemPrompt);
-
-    // Parse action if present
-    let displayText = raw;
-    if (raw.startsWith("ACTION:")) {
-      const newlineIdx = raw.indexOf("\n");
-      const actionLine = newlineIdx > -1 ? raw.slice(7, newlineIdx).trim() : raw.slice(7).trim();
-      displayText = newlineIdx > -1 ? raw.slice(newlineIdx).trim() : "Done.";
-      try {
-        const action = JSON.parse(actionLine);
-        if (action.type !== "none") applyAction(action);
-      } catch (e) { /* ignore parse errors */ }
+    // Try local intent parsing first (instant, no API needed)
+    const intent = parseIntent(userText);
+    if (intent) {
+      await applyAction({ type: intent.type, data: intent.data });
+      setMessages(m => [...m, { role: "assistant", content: intent.reply }]);
+      return;
     }
 
-    setMessages(m => [...m, { role: "assistant", content: displayText }]);
+    // Fall back to Claude API for questions and complex requests
+    setLoading(true);
+    try {
+      const totalMiles = mileage.filter(m => m.deductible).reduce((s, m) => s + m.miles, 0);
+      const outstanding = invoices.filter(i => i.status === "outstanding").reduce((s, i) => s + i.amount, 0);
+      const systemPrompt = `You are Claude, Nate's business assistant for Underhillmedia. Answer questions about his business concisely. Never use dashes.
+Business snapshot: ${clients.length} clients, ${projects.filter(p=>p.status==="in_progress").length} active projects, $${outstanding} outstanding, ${totalMiles.toFixed(1)} deductible miles.
+Clients: ${clients.map(c=>c.name).join(", ")}.
+Active projects: ${projects.filter(p=>p.status==="in_progress").map(p=>p.name).join(", ")}.`;
+
+      const res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 300,
+          system: systemPrompt,
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await res.json();
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "I couldn't process that. Try: add project, log miles, add expense, or mark invoice paid.";
+      setMessages(m => [...m, { role: "assistant", content: text }]);
+    } catch {
+      setMessages(m => [...m, { role: "assistant", content: "Try: add project, log miles, add expense, or mark [invoice] paid." }]);
+    }
     setLoading(false);
   };
 
