@@ -1796,68 +1796,59 @@ RULES:
   };
 
   const applyAction = async (action) => {
-    const today = new Date().toISOString().split("T")[0];
-    switch (action.type) {
-      case "add_client": {
-        const { data } = await supabase.from("clients").insert([{ total_billed: 0, outstanding: 0, pipeline_stage: action.data.pipelineStage || "Lead", ...action.data }]).select().single();
-        if (data) setClients(prev => [...prev, { ...data, totalBilled: data.total_billed, pipelineStage: data.pipeline_stage }]);
-        setLastAction("Added client");
-        break;
+    if (action.type === "navigate") {
+      setActive(action.data.page);
+      setLastAction(`Navigated to ${action.data.page}`);
+      return;
+    }
+    if (action.type === "none") return;
+
+    try {
+      const res = await fetch("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: action.type, data: action.data }),
+      });
+      const result = await res.json();
+
+      if (result.success) {
+        const row = Array.isArray(result.data) ? result.data[0] : result.data;
+        switch (action.type) {
+          case "add_client":
+            if (row) setClients(prev => [...prev, { ...row, totalBilled: row.total_billed, pipelineStage: row.pipeline_stage }]);
+            setLastAction("Added client");
+            break;
+          case "add_project":
+            if (row) setProjects(prev => [...prev, { ...row, clientId: row.client_id, dueDate: row.due_date }]);
+            setLastAction("Added project");
+            break;
+          case "add_invoice":
+            if (row) setInvoices(prev => [...prev, { ...row, clientId: row.client_id, dueDate: row.due_date }]);
+            setLastAction("Created invoice");
+            break;
+          case "mark_invoice_paid":
+            setInvoices(prev => prev.map(i => i.id === Number(action.data.invoiceId) ? { ...i, status: "paid" } : i));
+            setLastAction("Marked paid");
+            break;
+          case "add_expense":
+            if (row) setExpenses(prev => [...prev, row]);
+            setLastAction("Logged expense");
+            break;
+          case "add_mileage":
+            if (row) setMileage(prev => [...prev, { ...row, clientId: row.client_id }]);
+            setLastAction("Logged trip");
+            break;
+          case "update_project_status":
+            setProjects(prev => prev.map(p => p.id === Number(action.data.projectId) ? { ...p, status: action.data.status } : p));
+            setLastAction("Updated project");
+            break;
+          case "add_calendar_event":
+            setLastAction("Added calendar event");
+            break;
+        }
       }
-      case "add_project": {
-        const insert = { name: action.data.name, status: action.data.status || "in_progress", value: Number(action.data.value) || 0, due_date: action.data.dueDate || "", notes: action.data.notes || "", client_id: Number(action.data.clientId) || null };
-        const { data } = await supabase.from("projects").insert([insert]).select().single();
-        if (data) setProjects(prev => [...prev, { ...data, clientId: data.client_id, dueDate: data.due_date }]);
-        setLastAction("Added project");
-        break;
-      }
-      case "add_invoice": {
-        const { count } = await supabase.from("invoices").select("*", { count: "exact", head: true });
-        const num = `INV-${String((count || 0) + 1).padStart(3, "0")}`;
-        const insert = { number: num, status: "outstanding", date: today, amount: Number(action.data.amount), due_date: action.data.dueDate || "", client_id: Number(action.data.clientId) || null, notes: action.data.notes || "" };
-        const { data } = await supabase.from("invoices").insert([insert]).select().single();
-        if (data) setInvoices(prev => [...prev, { ...data, clientId: data.client_id, dueDate: data.due_date }]);
-        setLastAction("Created invoice");
-        break;
-      }
-      case "mark_invoice_paid": {
-        await supabase.from("invoices").update({ status: "paid" }).eq("id", Number(action.data.invoiceId));
-        setInvoices(prev => prev.map(i => i.id === Number(action.data.invoiceId) ? { ...i, status: "paid" } : i));
-        setLastAction("Marked invoice paid");
-        break;
-      }
-      case "add_expense": {
-        const insert = { date: action.data.date || today, description: action.data.description, amount: Number(action.data.amount), category: action.data.category || "Other", deductible: action.data.deductible !== false, notes: action.data.notes || "" };
-        const { data } = await supabase.from("expenses").insert([insert]).select().single();
-        if (data) setExpenses(prev => [...prev, data]);
-        setLastAction("Logged expense");
-        break;
-      }
-      case "add_mileage": {
-        const insert = { date: action.data.date || today, from: action.data.from || "Home", to: action.data.to, miles: Number(action.data.miles), purpose: action.data.purpose || "", client_id: action.data.clientId ? Number(action.data.clientId) : null, deductible: action.data.deductible !== false };
-        const { data } = await supabase.from("mileage").insert([insert]).select().single();
-        if (data) setMileage(prev => [...prev, { ...data, clientId: data.client_id }]);
-        setLastAction("Logged trip");
-        break;
-      }
-      case "update_project_status": {
-        await supabase.from("projects").update({ status: action.data.status }).eq("id", Number(action.data.projectId));
-        setProjects(prev => prev.map(p => p.id === Number(action.data.projectId) ? { ...p, status: action.data.status } : p));
-        setLastAction("Updated project");
-        break;
-      }
-      case "add_calendar_event": {
-        const insert = { title: action.data.title, date: action.data.date, start_time: action.data.startTime || "09:00", end_time: action.data.endTime || "10:00", description: action.data.description || "", location: action.data.location || "", color: action.data.color || "#3b5bdb", source: "claude" };
-        await supabase.from("calendar_events").insert([insert]);
-        setLastAction("Added calendar event");
-        break;
-      }
-      case "navigate":
-        setActive(action.data.page);
-        setLastAction(`Navigated to ${action.data.page}`);
-        break;
-      default:
-        break;
+    } catch (err) {
+      console.error("Action error:", err);
     }
   };
 
