@@ -69,17 +69,11 @@ const STATUS_COLORS = {
 };
 
 function callClaude(messages, systemPrompt = "") {
-  const isLocal = window.location.hostname === "localhost";
-  const endpoint = isLocal
-    ? "https://api.anthropic.com/v1/messages"
-    : "/api/claude";
-
-  const headers = { "Content-Type": "application/json" };
-  if (isLocal) headers["x-api-key"] = "";
+  const endpoint = "/api/claude";
 
   return fetch(endpoint, {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
       max_tokens: 1000,
@@ -90,8 +84,9 @@ function callClaude(messages, systemPrompt = "") {
     .then((r) => r.json())
     .then((d) => {
       const text = d.content?.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-      return text || "No response.";
-    });
+      return text || d.error || "No response.";
+    })
+    .catch(err => `Error: ${err.message}`);
 }
 
 // ── Stat Card ──────────────────────────────────────────────────────────────
