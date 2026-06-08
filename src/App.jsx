@@ -1292,17 +1292,47 @@ function Mileage({ mileage, setMileage, clients }) {
   );
 }
 
-// ── CALENDAR ───────────────────────────────────────────────────────────────
+const ICAL_FEED = "https://p171-caldav.icloud.com/published/2/MTk3OTg1NTg0OTE5Nzk4NSBbfNCrBZoKNg6P17HExL4eUmmJOipkBd35K8xPjXP4281daZ4XwB5LlGwWVX8gUnuwxHo1J9ydwwIhaUiexRU";
+
+function parseICAL(text) {
+  const events = [];
+  const blocks = text.split("BEGIN:VEVENT");
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i];
+    const get = (key) => {
+      const match = block.match(new RegExp(`${key}[^:]*:(.+)`));
+      return match ? match[1].replace(/\r/g, "").trim() : "";
+    };
+    const dtstart = get("DTSTART");
+    const dtend = get("DTEND");
+    const summary = get("SUMMARY");
+    const location = get("LOCATION");
+    const description = get("DESCRIPTION");
+    if (!summary || !dtstart) continue;
+    const parseDate = (dt) => {
+      if (!dt) return null;
+      if (dt.length === 8) return `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}`;
+      if (dt.length >= 15) return `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${dt.slice(9,11)}:${dt.slice(11,13)}`;
+      return null;
+    };
+    const startDate = parseDate(dtstart);
+    if (!startDate) continue;
+    const date = startDate.slice(0, 10);
+    const time = startDate.length > 10 ? startDate.slice(11, 16) : "";
+    events.push({ title: summary, date, time, location, description });
+  }
+  return events;
+}
 function Calendar({ clients, projects, invoices }) {
   const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [suggestion, setSuggestion] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [result, setResult] = useState("");
   const [selectedDay, setSelectedDay] = useState(null);
-  const [form, setForm] = useState({ title: "", date: "", time: "09:00", duration: "60", description: "", location: "" });
+  const [form, setForm] = useState({ title: "", date: "", start_time: "09:00", end_time: "10:00", description: "", location: "", color: "#3b5bdb" });
 
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -1310,15 +1340,8 @@ function Calendar({ clients, projects, invoices }) {
 
   const loadEvents = async () => {
     setLoading(true);
-    const prompt = `Using Google Calendar MCP, fetch ALL events for the next 60 days and return them as a JSON array:
-[{"title":"event name","date":"YYYY-MM-DD","time":"HH:MM","duration":60,"description":"","location":""}]
-Return ONLY the JSON array, no other text.`;
-    const res = await callClaude([{ role: "user", content: prompt }],
-      "You are a calendar assistant. Use Google Calendar MCP to fetch events. Return only valid JSON arrays.");
-    try {
-      const match = res.match(/\[[\s\S]*\]/);
-      setEvents(match ? JSON.parse(match[0]) : []);
-    } catch { setEvents([]); }
+    const { data } = await supabase.from("calendar_events").select("*").order("date").order("start_time");
+    if (data) setEvents(data);
     setLoading(false);
   };
 
@@ -1327,230 +1350,159 @@ Return ONLY the JSON array, no other text.`;
   const addEvent = async () => {
     if (!form.title || !form.date) return;
     setCreating(true);
-    const prompt = `Using Google Calendar MCP, create a calendar event:
-Title: ${form.title}, Date: ${form.date}, Time: ${form.time}, Duration: ${form.duration} minutes, Description: ${form.description}, Location: ${form.location}. Confirm when done.`;
-    const res = await callClaude([{ role: "user", content: prompt }],
-      "You are a calendar assistant. Use Google Calendar MCP to create events. Be brief. Never use dashes.");
-    setResult(res);
+    const { data } = await supabase.from("calendar_events").insert([{ ...form, source: "manual" }]).select().single();
+    if (data) setEvents(prev => [...prev, data].sort((a, b) => a.date.localeCompare(b.date)));
+    setResult(`"${form.title}" added.`);
     setCreating(false);
     setShowAdd(false);
-    loadEvents();
+    setForm({ title: "", date: "", start_time: "09:00", end_time: "10:00", description: "", location: "", color: "#3b5bdb" });
+  };
+
+  const deleteEvent = async (id) => {
+    await supabase.from("calendar_events").delete().eq("id", id);
+    setEvents(prev => prev.filter(e => e.id !== id));
   };
 
   const suggestTime = async () => {
     setSuggesting(true);
-    const upcomingProjects = projects.filter(p => p.status === "in_progress").map(p => `${p.name} due ${p.dueDate}`).join(", ");
-    const res = await callClaude([{ role: "user", content: `Look at Nate's Google Calendar for the next 14 days. Suggest the 3 best open slots for a client meeting, considering his schedule and these projects: ${upcomingProjects}. Be brief. Never use dashes.` }],
-      "You are a smart scheduling assistant with access to Google Calendar.");
+    const upcoming = events.filter(e => e.date >= new Date().toISOString().split("T")[0]).slice(0, 10).map(e => `${e.date} ${e.start_time}-${e.end_time}: ${e.title}`).join("\n");
+    const proj = projects.filter(p => p.status === "in_progress").map(p => `${p.name} due ${p.dueDate}`).join(", ");
+    const res = await callClaude([{ role: "user", content: `Nate's schedule:\n${upcoming || "No events."}\nActive projects: ${proj || "none"}\nSuggest 3 best open slots in next 2 weeks for a client meeting. Never use dashes.` }]);
     setSuggestion(res);
     setSuggesting(false);
   };
 
-  const quickAdd = async (title, date, notes) => {
-    setCreating(true);
-    const prompt = `Using Google Calendar MCP, create: Title: "${title}", Date: ${date}, Time: 09:00, Duration: 30 minutes, Description: "${notes}". Confirm when done.`;
-    const res = await callClaude([{ role: "user", content: prompt }], "You are a calendar assistant. Use Google Calendar MCP. Be brief. Never use dashes.");
-    setResult(res);
-    setCreating(false);
-    loadEvents();
-  };
-
-  // Calendar grid helpers
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
   const today = new Date().toISOString().split("T")[0];
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const EVENT_COLORS = ["#3b5bdb","#4ade80","#f87171","#facc15","#c084fc","#60a5fa","#fb923c","#f472b6"];
 
   const getEventsForDay = (day) => {
-    const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    const gcalEvents = events.filter(e => e.date === dateStr);
-    const projectDeadlines = projects.filter(p => p.dueDate === dateStr && p.status === "in_progress");
-    const invoiceDues = invoices.filter(i => i.dueDate === dateStr && i.status === "outstanding");
-    return { gcalEvents, projectDeadlines, invoiceDues, dateStr };
+    const dateStr = `${viewYear}-${String(viewMonth+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    return {
+      dayEvents: events.filter(e => e.date === dateStr),
+      projectDeadlines: projects.filter(p => p.dueDate === dateStr && p.status === "in_progress"),
+      invoiceDues: invoices.filter(i => i.dueDate === dateStr && i.status === "outstanding"),
+      dateStr,
+    };
   };
 
-  const prevMonth = () => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); } else setViewMonth(m => m - 1); };
-  const nextMonth = () => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); } else setViewMonth(m => m + 1); };
-
-  const outstandingInvoices = invoices.filter(i => i.status === "outstanding");
-  const upcomingProjects = projects.filter(p => p.status === "in_progress");
+  const prevMonth = () => { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1);}else setViewMonth(m=>m-1); };
+  const nextMonth = () => { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1);}else setViewMonth(m=>m+1); };
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 24, color: "#e2e8f0", fontFamily: "'Playfair Display', serif" }}>Calendar</h2>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={loadEvents} disabled={loading} style={{ background: "#1a2235", border: "1px solid #2a3550", borderRadius: 8, padding: "8px 14px", color: "#8892a4", fontSize: 12, cursor: "pointer" }}>
-            {loading ? "Syncing..." : "↻ Sync Google"}
-          </button>
-          <PrimaryBtn onClick={() => setShowAdd(true)}>+ Add Event</PrimaryBtn>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <h2 style={{margin:0,fontSize:24,color:"#e2e8f0",fontFamily:"'Playfair Display',serif"}}>Calendar</h2>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={loadEvents} disabled={loading} style={{background:"#1a2235",border:"1px solid #2a3550",borderRadius:8,padding:"8px 14px",color:"#8892a4",fontSize:12,cursor:"pointer"}}>{loading?"Loading...":"↻ Refresh"}</button>
+          <PrimaryBtn onClick={()=>setShowAdd(true)}>+ Add Event</PrimaryBtn>
         </div>
       </div>
 
-      {result && (
-        <div style={{ background: "#4ade8012", border: "1px solid #4ade8030", borderRadius: 10, padding: "12px 16px", marginBottom: 16, color: "#4ade80", fontSize: 13, display: "flex", justifyContent: "space-between" }}>
-          {result}
-          <button onClick={() => setResult("")} style={{ background: "none", border: "none", color: "#4ade8080", cursor: "pointer" }}>✕</button>
-        </div>
-      )}
+      {result && <div style={{background:"#4ade8012",border:"1px solid #4ade8030",borderRadius:10,padding:"12px 16px",marginBottom:16,color:"#4ade80",fontSize:13,display:"flex",justifyContent:"space-between"}}>{result}<button onClick={()=>setResult("")} style={{background:"none",border:"none",color:"#4ade8080",cursor:"pointer"}}>✕</button></div>}
 
-      {/* Smart scheduling bar */}
-      <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>Smart Scheduling</div>
-          <div style={{ color: "#6b7a8e", fontSize: 11 }}>Claude reads your calendar and finds the best open slots</div>
-        </div>
-        <button onClick={suggestTime} disabled={suggesting} style={{ background: "linear-gradient(135deg,#3b5bdb,#4c6ef5)", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 12, cursor: "pointer" }}>
-          {suggesting ? "Checking..." : "◉ Suggest Times"}
-        </button>
+      <div style={{background:"linear-gradient(135deg,#1a1a2e,#16213e)",border:"1px solid #3b5bdb33",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+        <div><div style={{color:"#e2e8f0",fontSize:13,fontWeight:600}}>Smart Scheduling</div><div style={{color:"#6b7a8e",fontSize:11}}>Claude looks at your schedule and finds the best open slots</div></div>
+        <button onClick={suggestTime} disabled={suggesting} style={{background:"linear-gradient(135deg,#3b5bdb,#4c6ef5)",border:"none",borderRadius:8,padding:"8px 16px",color:"#fff",fontSize:12,cursor:"pointer"}}>{suggesting?"Thinking...":"◉ Suggest Times"}</button>
       </div>
-      {suggestion && (
-        <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
-          <pre style={{ color: "#c8d3e0", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0 }}>{suggestion}</pre>
-        </div>
-      )}
+      {suggestion && <div style={{background:"#0f1623",border:"1px solid #1e2d45",borderRadius:10,padding:"14px 16px",marginBottom:20}}><pre style={{color:"#c8d3e0",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0}}>{suggestion}</pre></div>}
 
-      {/* Visual calendar grid */}
-      <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 14, overflow: "hidden", marginBottom: 20 }}>
-        {/* Month nav */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #1a2235" }}>
-          <button onClick={prevMonth} style={{ background: "none", border: "none", color: "#6b7a8e", cursor: "pointer", fontSize: 18, padding: "0 8px" }}>‹</button>
-          <div style={{ color: "#e2e8f0", fontSize: 16, fontFamily: "'Playfair Display', serif", fontWeight: 600 }}>{monthNames[viewMonth]} {viewYear}</div>
-          <button onClick={nextMonth} style={{ background: "none", border: "none", color: "#6b7a8e", cursor: "pointer", fontSize: 18, padding: "0 8px" }}>›</button>
+      <div style={{background:"#0f1623",border:"1px solid #1e2d45",borderRadius:14,overflow:"hidden",marginBottom:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 20px",borderBottom:"1px solid #1a2235"}}>
+          <button onClick={prevMonth} style={{background:"none",border:"none",color:"#6b7a8e",cursor:"pointer",fontSize:20,padding:"0 8px"}}>‹</button>
+          <div style={{color:"#e2e8f0",fontSize:16,fontFamily:"'Playfair Display',serif",fontWeight:600}}>{monthNames[viewMonth]} {viewYear}</div>
+          <button onClick={nextMonth} style={{background:"none",border:"none",color:"#6b7a8e",cursor:"pointer",fontSize:20,padding:"0 8px"}}>›</button>
         </div>
-
-        {/* Day headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: "1px solid #1a2235" }}>
-          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
-            <div key={d} style={{ padding: "8px 0", textAlign: "center", fontSize: 11, color: "#6b7a8e", letterSpacing: "0.08em", textTransform: "uppercase" }}>{d}</div>
-          ))}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid #1a2235"}}>
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=><div key={d} style={{padding:"8px 0",textAlign:"center",fontSize:11,color:"#6b7a8e",textTransform:"uppercase"}}>{d}</div>)}
         </div>
-
-        {/* Day cells */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
-          {Array.from({ length: firstDayOfMonth }).map((_, i) => (
-            <div key={`empty-${i}`} style={{ minHeight: 90, borderRight: "1px solid #1a2235", borderBottom: "1px solid #1a2235", background: "#0a0f1e" }} />
-          ))}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1;
-            const { gcalEvents, projectDeadlines, invoiceDues, dateStr } = getEventsForDay(day);
-            const isToday = dateStr === today;
-            const hasEvents = gcalEvents.length + projectDeadlines.length + invoiceDues.length > 0;
-            const isSelected = selectedDay === dateStr;
-            const col = (firstDayOfMonth + i) % 7;
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+          {Array.from({length:firstDayOfMonth}).map((_,i)=><div key={`e${i}`} style={{minHeight:80,borderRight:"1px solid #1a2235",borderBottom:"1px solid #1a2235",background:"#0a0f1e"}}/>)}
+          {Array.from({length:daysInMonth}).map((_,i)=>{
+            const day=i+1;
+            const {dayEvents,projectDeadlines,invoiceDues,dateStr}=getEventsForDay(day);
+            const isToday=dateStr===today;
+            const isSelected=selectedDay===dateStr;
+            const col=(firstDayOfMonth+i)%7;
+            const total=dayEvents.length+projectDeadlines.length+invoiceDues.length;
             return (
-              <div key={day} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
-                style={{
-                  minHeight: 90, padding: "8px 6px",
-                  borderRight: col === 6 ? "none" : "1px solid #1a2235",
-                  borderBottom: "1px solid #1a2235",
-                  background: isSelected ? "#3b5bdb15" : isToday ? "#4ade8008" : "transparent",
-                  cursor: "pointer", position: "relative",
-                }}>
-                <div style={{
-                  width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                  background: isToday ? "#3b5bdb" : "transparent",
-                  color: isToday ? "#fff" : "#c8d3e0", fontSize: 13, fontWeight: isToday ? 600 : 400, marginBottom: 4,
-                }}>{day}</div>
-                {gcalEvents.slice(0,2).map((e, idx) => (
-                  <div key={idx} style={{ background: "#3b5bdb33", border: "1px solid #3b5bdb55", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#7c9ef8", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                    {e.time && <span style={{ opacity: 0.7 }}>{e.time.slice(0,5)} </span>}{e.title}
-                  </div>
-                ))}
-                {projectDeadlines.map((p, idx) => (
-                  <div key={idx} style={{ background: "#f8717133", border: "1px solid #f8717155", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#f87171", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                    📹 {p.name}
-                  </div>
-                ))}
-                {invoiceDues.map((inv, idx) => {
-                  const client = clients.find(c => c.id === inv.clientId);
-                  return (
-                    <div key={idx} style={{ background: "#facc1522", border: "1px solid #facc1544", borderRadius: 4, padding: "2px 5px", fontSize: 9, color: "#facc15", marginBottom: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                      💰 {client?.name}
-                    </div>
-                  );
-                })}
-                {(gcalEvents.length + projectDeadlines.length + invoiceDues.length) > 3 && (
-                  <div style={{ fontSize: 9, color: "#6b7a8e", padding: "1px 5px" }}>+{(gcalEvents.length + projectDeadlines.length + invoiceDues.length) - 3} more</div>
-                )}
+              <div key={day} onClick={()=>setSelectedDay(isSelected?null:dateStr)} style={{minHeight:80,padding:"6px 4px",borderRight:col===6?"none":"1px solid #1a2235",borderBottom:"1px solid #1a2235",background:isSelected?"#3b5bdb15":isToday?"#4ade8008":"transparent",cursor:"pointer"}}>
+                <div style={{width:24,height:24,borderRadius:"50%",background:isToday?"#3b5bdb":"transparent",color:isToday?"#fff":"#c8d3e0",fontSize:12,fontWeight:isToday?600:400,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:3}}>{day}</div>
+                {dayEvents.slice(0,2).map((e,idx)=><div key={idx} style={{background:`${e.color||"#3b5bdb"}33`,border:`1px solid ${e.color||"#3b5bdb"}55`,borderRadius:3,padding:"1px 4px",fontSize:9,color:e.color||"#7c9ef8",marginBottom:2,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{e.start_time&&<span style={{opacity:0.7}}>{e.start_time} </span>}{e.title}</div>)}
+                {projectDeadlines.map((p,idx)=><div key={idx} style={{background:"#f8717133",border:"1px solid #f8717155",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#f87171",marginBottom:2,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>📹 {p.name}</div>)}
+                {invoiceDues.map((inv,idx)=><div key={idx} style={{background:"#facc1522",border:"1px solid #facc1544",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#facc15",marginBottom:2,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>💰 {clients.find(c=>c.id===inv.clientId)?.name}</div>)}
+                {total>3&&<div style={{fontSize:9,color:"#6b7a8e",paddingLeft:4}}>+{total-3}</div>}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Selected day detail */}
-      {selectedDay && (() => {
-        const day = parseInt(selectedDay.split("-")[2]);
-        const { gcalEvents, projectDeadlines, invoiceDues } = getEventsForDay(day);
+      {selectedDay&&(()=>{
+        const day=parseInt(selectedDay.split("-")[2]);
+        const {dayEvents,projectDeadlines,invoiceDues}=getEventsForDay(day);
+        const total=dayEvents.length+projectDeadlines.length+invoiceDues.length;
         return (
-          <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <h3 style={{ margin: 0, fontSize: 14, color: "#e2e8f0" }}>{new Date(selectedDay + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
-              <button onClick={() => { setForm(f => ({ ...f, date: selectedDay })); setShowAdd(true); }}
-                style={{ background: "#3b5bdb22", border: "1px solid #3b5bdb44", borderRadius: 8, padding: "5px 12px", color: "#7c9ef8", fontSize: 12, cursor: "pointer" }}>+ Add Event</button>
+          <div style={{background:"#0f1623",border:"1px solid #1e2d45",borderRadius:12,padding:20,marginBottom:20}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <h3 style={{margin:0,fontSize:14,color:"#e2e8f0"}}>{new Date(selectedDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</h3>
+              <button onClick={()=>{setForm(f=>({...f,date:selectedDay}));setShowAdd(true);}} style={{background:"#3b5bdb22",border:"1px solid #3b5bdb44",borderRadius:8,padding:"5px 12px",color:"#7c9ef8",fontSize:12,cursor:"pointer"}}>+ Add Event</button>
             </div>
-            {gcalEvents.length === 0 && projectDeadlines.length === 0 && invoiceDues.length === 0 && (
-              <div style={{ color: "#3a4a60", fontSize: 13 }}>Nothing scheduled. Tap + Add Event to create one.</div>
-            )}
-            {gcalEvents.map((e, i) => (
-              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
-                <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#3b5bdb", flexShrink: 0 }} />
-                <div>
-                  <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 500 }}>{e.title}</div>
-                  <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>{e.time} {e.duration && `· ${e.duration}min`} {e.location && `· ${e.location}`}</div>
+            {total===0&&<div style={{color:"#3a4a60",fontSize:13}}>Nothing scheduled. Tap + Add Event.</div>}
+            {dayEvents.map((e,i)=>(
+              <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 0",borderBottom:"1px solid #1a2235"}}>
+                <div style={{width:4,borderRadius:2,alignSelf:"stretch",background:e.color||"#3b5bdb",flexShrink:0}}/>
+                <div style={{flex:1}}>
+                  <div style={{color:"#e2e8f0",fontSize:13,fontWeight:500}}>{e.title}</div>
+                  <div style={{color:"#6b7a8e",fontSize:11,marginTop:2}}>{e.start_time}{e.end_time?` to ${e.end_time}`:""}{e.location?` · ${e.location}`:""}</div>
+                  {e.description&&<div style={{color:"#6b7a8e",fontSize:11,marginTop:2}}>{e.description}</div>}
                 </div>
+                <button onClick={()=>deleteEvent(e.id)} style={{background:"none",border:"none",color:"#f8717150",cursor:"pointer",fontSize:13,padding:0}}>✕</button>
               </div>
             ))}
-            {projectDeadlines.map((p, i) => (
-              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
-                <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#f87171", flexShrink: 0 }} />
-                <div>
-                  <div style={{ color: "#f87171", fontSize: 13, fontWeight: 500 }}>📹 {p.name} — Deadline</div>
-                  <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>{clients.find(c => c.id === p.clientId)?.name}</div>
-                </div>
-                <button onClick={() => quickAdd(`📹 ${p.name} Deadline`, selectedDay, p.notes || "")} style={{ marginLeft: "auto", background: "#f8717120", border: "1px solid #f8717140", borderRadius: 6, padding: "4px 10px", color: "#f87171", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>Add to GCal</button>
+            {projectDeadlines.map((p,i)=>(
+              <div key={i} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid #1a2235"}}>
+                <div style={{width:4,borderRadius:2,background:"#f87171",flexShrink:0}}/>
+                <div><div style={{color:"#f87171",fontSize:13,fontWeight:500}}>📹 {p.name} — Deadline</div><div style={{color:"#6b7a8e",fontSize:11}}>{clients.find(c=>c.id===p.clientId)?.name}</div></div>
               </div>
             ))}
-            {invoiceDues.map((inv, i) => {
-              const client = clients.find(c => c.id === inv.clientId);
-              return (
-                <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid #1a2235" }}>
-                  <div style={{ width: 4, borderRadius: 2, alignSelf: "stretch", background: "#facc15", flexShrink: 0 }} />
-                  <div>
-                    <div style={{ color: "#facc15", fontSize: 13, fontWeight: 500 }}>💰 {inv.number} Due — {client?.name}</div>
-                    <div style={{ color: "#6b7a8e", fontSize: 11, marginTop: 2 }}>${inv.amount.toLocaleString()}</div>
-                  </div>
-                  <button onClick={() => quickAdd(`💰 ${inv.number} Due — ${client?.name}`, selectedDay, `Invoice for $${inv.amount}`)} style={{ marginLeft: "auto", background: "#facc1520", border: "1px solid #facc1540", borderRadius: 6, padding: "4px 10px", color: "#facc15", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>Add to GCal</button>
-                </div>
-              );
+            {invoiceDues.map((inv,i)=>{
+              const client=clients.find(c=>c.id===inv.clientId);
+              return <div key={i} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid #1a2235"}}><div style={{width:4,borderRadius:2,background:"#facc15",flexShrink:0}}/><div><div style={{color:"#facc15",fontSize:13,fontWeight:500}}>💰 {inv.number} — {client?.name}</div><div style={{color:"#6b7a8e",fontSize:11}}>${inv.amount.toLocaleString()}</div></div></div>;
             })}
           </div>
         );
       })()}
 
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 20, fontSize: 11, color: "#6b7a8e", marginBottom: 20 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#3b5bdb33", border: "1px solid #3b5bdb55", display: "inline-block" }} />Google Calendar</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#f8717133", border: "1px solid #f8717155", display: "inline-block" }} />Project Deadlines</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#facc1522", border: "1px solid #facc1544", display: "inline-block" }} />Invoice Due</span>
+      <div style={{display:"flex",gap:16,fontSize:11,color:"#6b7a8e",flexWrap:"wrap",marginBottom:20}}>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:"#3b5bdb33",border:"1px solid #3b5bdb55",display:"inline-block"}}/> Events</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:"#f8717133",border:"1px solid #f8717155",display:"inline-block"}}/> Project Deadlines</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:"#facc1522",border:"1px solid #facc1544",display:"inline-block"}}/> Invoice Due</span>
       </div>
 
-      {showAdd && (
-        <Modal title="Add Calendar Event" onClose={() => setShowAdd(false)}>
-          <InputField label="Title" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Client call with Krista" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <InputField label="Date" value={form.date} onChange={v => setForm({ ...form, date: v })} type="date" />
-            <InputField label="Time" value={form.time} onChange={v => setForm({ ...form, time: v })} type="time" />
+      {showAdd&&(
+        <Modal title="Add Event" onClose={()=>setShowAdd(false)}>
+          <InputField label="Title" value={form.title} onChange={v=>setForm({...form,title:v})} placeholder="e.g. Client shoot with Krista"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <InputField label="Date" value={form.date} onChange={v=>setForm({...form,date:v})} type="date"/>
+            <InputField label="Location" value={form.location} onChange={v=>setForm({...form,location:v})} placeholder="Optional"/>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <InputField label="Duration (mins)" value={form.duration} onChange={v => setForm({ ...form, duration: v })} type="number" placeholder="60" />
-            <InputField label="Location" value={form.location} onChange={v => setForm({ ...form, location: v })} placeholder="Optional" />
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <InputField label="Start Time" value={form.start_time} onChange={v=>setForm({...form,start_time:v})} type="time"/>
+            <InputField label="End Time" value={form.end_time} onChange={v=>setForm({...form,end_time:v})} type="time"/>
           </div>
-          <InputField label="Description" value={form.description} onChange={v => setForm({ ...form, description: v })} placeholder="Optional notes" />
-          <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 8 }}>
-            <GhostBtn onClick={() => setShowAdd(false)}>Cancel</GhostBtn>
-            <PrimaryBtn onClick={addEvent}>{creating ? "Creating..." : "Add to Google Calendar"}</PrimaryBtn>
+          <InputField label="Description" value={form.description} onChange={v=>setForm({...form,description:v})} placeholder="Optional notes"/>
+          <div style={{marginBottom:16}}>
+            <label style={{display:"block",fontSize:11,letterSpacing:"0.1em",color:"#8892a4",textTransform:"uppercase",marginBottom:8}}>Color</label>
+            <div style={{display:"flex",gap:8}}>
+              {EVENT_COLORS.map(c=><div key={c} onClick={()=>setForm({...form,color:c})} style={{width:24,height:24,borderRadius:"50%",background:c,cursor:"pointer",border:form.color===c?"3px solid #fff":"3px solid transparent"}}/>)}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginTop:8}}>
+            <GhostBtn onClick={()=>setShowAdd(false)}>Cancel</GhostBtn>
+            <PrimaryBtn onClick={addEvent}>{creating?"Adding...":"Add Event"}</PrimaryBtn>
           </div>
         </Modal>
       )}
