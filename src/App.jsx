@@ -235,6 +235,8 @@ function Dashboard({ clients, projects, invoices, expenses, mileage, followups, 
 
   const [digest, setDigest] = useState(null);
   const [loadingDigest, setLoadingDigest] = useState(false);
+  const [sendingDigest, setSendingDigest] = useState(false);
+  const [digestSent, setDigestSent] = useState(false);
 
   const generateDigest = async () => {
     setLoadingDigest(true);
@@ -250,6 +252,60 @@ Do not use dashes. Focus on what actually needs action today.`;
     const result = await callClaude([{ role: "user", content: prompt }]);
     setDigest(result);
     setLoadingDigest(false);
+    return result;
+  };
+
+  const sendDigestEmail = async () => {
+    setSendingDigest(true);
+    let text = digest;
+    if (!text) text = await generateDigest();
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const htmlBody = `
+      <div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2a;">
+        <div style="border-bottom: 2px solid #3b5bdb; padding-bottom: 12px; margin-bottom: 24px;">
+          <div style="font-size: 11px; letter-spacing: 0.2em; color: #3b5bdb; text-transform: uppercase; font-weight: 600;">Underhillmedia Studio</div>
+          <h1 style="margin: 4px 0 0; font-size: 22px; color: #0f1623;">Daily Digest — ${today}</h1>
+        </div>
+        <div style="background: #f8f9ff; border-left: 4px solid #3b5bdb; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+          <pre style="margin: 0; font-family: -apple-system, sans-serif; font-size: 14px; line-height: 1.8; white-space: pre-wrap; color: #1a1a2a;">${text}</pre>
+        </div>
+        <div style="display: flex; gap: 16px; margin-bottom: 24px;">
+          <div style="flex: 1; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 14px; text-align: center;">
+            <div style="font-size: 11px; color: #92400e; text-transform: uppercase; letter-spacing: 0.08em;">Outstanding</div>
+            <div style="font-size: 24px; font-weight: 700; color: #d97706; margin: 4px 0;">$${totalOutstanding.toLocaleString()}</div>
+          </div>
+          <div style="flex: 1; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; text-align: center;">
+            <div style="font-size: 11px; color: #166534; text-transform: uppercase; letter-spacing: 0.08em;">Active Projects</div>
+            <div style="font-size: 24px; font-weight: 700; color: #16a34a; margin: 4px 0;">${activeProjects}</div>
+          </div>
+          <div style="flex: 1; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; text-align: center;">
+            <div style="font-size: 11px; color: #991b1b; text-transform: uppercase; letter-spacing: 0.08em;">Overdue</div>
+            <div style="font-size: 24px; font-weight: 700; color: #dc2626; margin: 4px 0;">${overdueInvoices.length}</div>
+          </div>
+        </div>
+        <div style="text-align: center; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+          <a href="https://underhillmedia-studio.vercel.app" style="background: #3b5bdb; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Underhillmedia Studio</a>
+        </div>
+      </div>`;
+
+    try {
+      await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 100,
+          system: "You are an email assistant. Use Gmail MCP to send the email exactly as instructed.",
+          messages: [{ role: "user", content: `Send an email to nate@underhillmedia.com with subject "Underhillmedia Daily Digest — ${today}" and this HTML body: ${htmlBody}` }],
+          mcp_servers: MCP_SERVERS,
+        }),
+      });
+      setDigestSent(true);
+      setTimeout(() => setDigestSent(false), 4000);
+    } catch (e) {
+      console.error(e);
+    }
+    setSendingDigest(false);
   };
 
   return (
@@ -292,14 +348,27 @@ Do not use dashes. Focus on what actually needs action today.`;
 
       {/* Morning digest */}
       <div style={{ background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid #3b5bdb33", borderRadius: 12, padding: 20, marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: digest ? 14 : 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: digest ? 14 : 0, flexWrap: "wrap", gap: 10 }}>
           <div>
             <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600, marginBottom: 2 }}>Daily Digest</div>
             <div style={{ color: "#6b7a8e", fontSize: 12 }}>Claude's take on what needs your attention today</div>
           </div>
-          <button onClick={generateDigest} disabled={loadingDigest} style={{ background: "linear-gradient(135deg,#3b5bdb,#4c6ef5)", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", marginLeft: 12 }}>
-            {loadingDigest ? "Thinking..." : "◉ Get Digest"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {digest && (
+              <button onClick={sendDigestEmail} disabled={sendingDigest} style={{
+                background: digestSent ? "#4ade8020" : "#1a2235",
+                border: `1px solid ${digestSent ? "#4ade8060" : "#2a3550"}`,
+                borderRadius: 8, padding: "8px 14px",
+                color: digestSent ? "#4ade80" : "#8892a4",
+                fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+              }}>
+                {digestSent ? "✓ Sent to Gmail" : sendingDigest ? "Sending..." : "✉ Email to Me"}
+              </button>
+            )}
+            <button onClick={generateDigest} disabled={loadingDigest} style={{ background: "linear-gradient(135deg,#3b5bdb,#4c6ef5)", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {loadingDigest ? "Thinking..." : "◉ Get Digest"}
+            </button>
+          </div>
         </div>
         {digest && (
           <div style={{ background: "#0f1623", border: "1px solid #1e2d45", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
